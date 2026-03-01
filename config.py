@@ -19,7 +19,9 @@ INSTAMONSTER_ADMIN_API_KEY = os.getenv("INSTAMONSTER_ADMIN_API_KEY")
 INSTAMONSTER_ADMIN_API_URL = "https://instamonster.co.kr/adminapi/v2"
 
 # Apify (인스타그램 프로필 스크래핑)
-APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN") or (
+    (os.getenv("APIFY_API_TOKEN_PREFIX", "") + os.getenv("APIFY_API_TOKEN_VALUE", "")) or None
+)
 
 # superap.io (캠페인 자동 등록)
 SUPERAP_USERNAME = os.getenv("SUPERAP_USERNAME")
