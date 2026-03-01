@@ -1,4 +1,5 @@
 import logging
+import time
 import base64
 from datetime import datetime, timezone, timedelta
 
@@ -7,8 +8,14 @@ from flask import Blueprint, request, redirect, url_for, flash
 
 from models import db, OAuthToken
 import config
+from services.telegram_notifier import notify_token_expiring, notify_token_expired
 
 logger = logging.getLogger(__name__)
+
+MAX_REFRESH_RETRIES = 3
+
+# 토큰 만료 임박 알림 중복 방지 (날짜 기준)
+_last_expiry_alert_date = None
 
 oauth_bp = Blueprint("oauth", __name__)
 
@@ -84,10 +91,18 @@ def save_token(token_data):
 
 
 def get_valid_token():
-    """유효한 액세스 토큰을 반환 (필요 시 자동 갱신)"""
+    """유효한 액세스 토큰을 반환 (필요 시 자동 갱신).
+
+    - Refresh 토큰 만료 3일 전부터 텔레그램 경고 (1일 1회)
+    - Refresh 토큰 만료 시 긴급 알림
+    - Access 토큰 갱신 실패 시 최대 3회 재시도
+    """
+    global _last_expiry_alert_date
+
     token = OAuthToken.query.first()
     if token is None:
         logger.error("저장된 토큰 없음 - OAuth 인증 필요")
+        notify_token_expired("카페24")
         return None
 
     now = datetime.now(timezone.utc)
@@ -100,22 +115,80 @@ def get_valid_token():
     if refresh_expires_at.tzinfo is None:
         refresh_expires_at = refresh_expires_at.replace(tzinfo=timezone.utc)
 
+    # ── Refresh 토큰 만료 임박 경고 (3일 전부터, 1일 1회) ──
+    days_left = (refresh_expires_at - now).days
+    today_str = now.strftime("%Y-%m-%d")
+    if 0 < days_left <= 3 and _last_expiry_alert_date != today_str:
+        _last_expiry_alert_date = today_str
+        logger.warning("카페24 Refresh 토큰 만료 %d일 전", days_left)
+        notify_token_expiring("카페24", days_left)
+
     # 만료 10분 전에 갱신
     if expires_at <= now + timedelta(minutes=10):
         # 리프레시 토큰도 만료되었으면 재인증 필요
         if refresh_expires_at <= now:
             logger.error("리프레시 토큰 만료 - 재인증 필요")
+            notify_token_expired("카페24")
             return None
 
         logger.info("액세스 토큰 갱신 중...")
+        last_error = None
+        for attempt in range(MAX_REFRESH_RETRIES):
+            try:
+                token_data = refresh_access_token(token.refresh_token)
+                token = save_token(token_data)
+                if attempt > 0:
+                    logger.info("토큰 갱신 성공 (재시도 %d회)", attempt)
+                return token.access_token
+            except requests.RequestException as e:
+                last_error = e
+                logger.warning("토큰 갱신 실패 (%d/%d): %s",
+                               attempt + 1, MAX_REFRESH_RETRIES, e)
+                if attempt < MAX_REFRESH_RETRIES - 1:
+                    time.sleep(2 ** attempt)
+
+        # 모든 재시도 실패
+        logger.error("토큰 갱신 최종 실패: %s", last_error)
+        notify_token_expired("카페24")
+        return None
+
+    return token.access_token
+
+
+def force_refresh_token():
+    """토큰을 강제로 갱신한다. 401 응답 시 호출용.
+
+    Returns:
+        str: 새 access_token 또는 None
+    """
+    token = OAuthToken.query.first()
+    if token is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    refresh_expires_at = token.refresh_expires_at
+    if refresh_expires_at.tzinfo is None:
+        refresh_expires_at = refresh_expires_at.replace(tzinfo=timezone.utc)
+
+    if refresh_expires_at <= now:
+        logger.error("강제 갱신 실패 - 리프레시 토큰 만료")
+        notify_token_expired("카페24")
+        return None
+
+    for attempt in range(MAX_REFRESH_RETRIES):
         try:
             token_data = refresh_access_token(token.refresh_token)
             token = save_token(token_data)
-        except requests.RequestException:
-            logger.exception("토큰 갱신 실패")
-            return None
+            logger.info("토큰 강제 갱신 성공")
+            return token.access_token
+        except requests.RequestException as e:
+            logger.warning("토큰 강제 갱신 실패 (%d/%d): %s",
+                           attempt + 1, MAX_REFRESH_RETRIES, e)
+            if attempt < MAX_REFRESH_RETRIES - 1:
+                time.sleep(2 ** attempt)
 
-    return token.access_token
+    notify_token_expired("카페24")
+    return None
 
 
 @oauth_bp.route("/oauth/callback")

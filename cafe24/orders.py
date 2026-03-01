@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 import requests
 
-from cafe24.auth import get_valid_token
+from cafe24.auth import get_valid_token, force_refresh_token
 import config
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,12 @@ def _api_request(method, endpoint, **kwargs):
             resp = requests.request(method, url, headers=headers, timeout=30, **kwargs)
 
             if resp.status_code == 401 and attempt < MAX_RETRIES - 1:
-                logger.warning("카페24 401 응답 - 토큰 갱신 후 재시도 (%d/%d)", attempt + 1, MAX_RETRIES)
+                logger.warning("카페24 401 응답 - 토큰 강제 갱신 후 재시도 (%d/%d)", attempt + 1, MAX_RETRIES)
+                new_token = force_refresh_token()
+                if new_token:
+                    logger.info("카페24 토큰 강제 갱신 성공 - 재시도")
+                else:
+                    logger.error("카페24 토큰 강제 갱신 실패")
                 time.sleep(1)
                 continue
 

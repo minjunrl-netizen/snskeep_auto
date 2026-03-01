@@ -4,11 +4,15 @@ import json
 import logging
 import math
 import os
+import time
 from datetime import datetime, timedelta
 
 import requests
 
 import config
+from services.telegram_notifier import (
+    notify_session_expired, notify_session_recovered, notify_session_recovery_failed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +119,13 @@ def _save_campaign_map(mapping: dict, campaign_type: str = "instagram"):
 
 
 class SuperapClient:
-    """superap.io 세션 관리 및 캠페인 자동화."""
+    """superap.io 세션 관리 및 캠페인 자동화.
+
+    세션 만료 자동 감지 및 재로그인을 지원한다.
+    """
+
+    MAX_LOGIN_RETRIES = 3
+    MAX_SESSION_RECOVERY = 2
 
     def __init__(self, campaign_type: str = "instagram"):
         self.session = requests.Session()
@@ -135,25 +145,156 @@ class SuperapClient:
             return dt
         return DETAIL_TYPE
 
+    # ── 로그인 / 세션 관리 ────────────────────────────────
+
     def login(self) -> bool:
+        """superap.io 로그인. 실패 시 최대 3회 재시도 (지수 백오프)."""
         username = config.SUPERAP_USERNAME
         password = config.SUPERAP_PASSWORD
         if not username or not password:
             raise RuntimeError("SUPERAP_USERNAME / SUPERAP_PASSWORD가 설정되지 않았습니다.")
 
-        resp = self.session.post(LOGIN_URL, data={
-            "j_username": username,
-            "j_password": password,
-        }, allow_redirects=True, timeout=30)
+        last_error = None
+        for attempt in range(self.MAX_LOGIN_RETRIES):
+            try:
+                # 재시도 시 세션 초기화 (쿠키 충돌 방지)
+                if attempt > 0:
+                    self.session = requests.Session()
 
-        if resp.status_code == 200 and "/login" not in resp.url:
-            self._logged_in = True
-            return True
-        raise RuntimeError("superap.io 로그인 실패")
+                resp = self.session.post(LOGIN_URL, data={
+                    "j_username": username,
+                    "j_password": password,
+                }, allow_redirects=True, timeout=30)
+
+                # 로그인 성공 판정: status 200 + 로그인 페이지가 아님 + 세션 쿠키 존재
+                if resp.status_code == 200 and "/login" not in resp.url:
+                    if self.session.cookies:
+                        self._logged_in = True
+                        if attempt > 0:
+                            logger.info("superap.io 로그인 성공 (재시도 %d회)", attempt)
+                            notify_session_recovered("superap.io")
+                        return True
+
+                last_error = f"status={resp.status_code}, url={resp.url}"
+                logger.warning("superap.io 로그인 실패 (%d/%d): %s",
+                               attempt + 1, self.MAX_LOGIN_RETRIES, last_error)
+
+            except requests.RequestException as e:
+                last_error = str(e)
+                logger.warning("superap.io 로그인 요청 실패 (%d/%d): %s",
+                               attempt + 1, self.MAX_LOGIN_RETRIES, e)
+
+            if attempt < self.MAX_LOGIN_RETRIES - 1:
+                wait = 2 ** attempt
+                time.sleep(wait)
+
+        # 모든 재시도 실패
+        self._logged_in = False
+        notify_session_recovery_failed("superap.io", last_error)
+        raise RuntimeError(f"superap.io 로그인 실패 ({self.MAX_LOGIN_RETRIES}회 재시도): {last_error}")
+
+    def _is_session_valid(self) -> bool:
+        """실제 API 호출로 세션 유효성 검증."""
+        try:
+            resp = self.session.get(TYPE_LIST_URL, timeout=15, allow_redirects=False)
+            # 302 → 로그인 페이지 리다이렉트 = 세션 만료
+            if resp.status_code == 302:
+                location = resp.headers.get("Location", "")
+                if "/login" in location:
+                    return False
+            # 200이지만 HTML(로그인 폼)이 반환된 경우
+            if resp.status_code == 200:
+                content_type = resp.headers.get("Content-Type", "")
+                if "application/json" in content_type:
+                    return True
+                # HTML 응답이면 세션 만료 가능성
+                if "text/html" in content_type and "/login" in resp.text[:500]:
+                    return False
+                # JSON 파싱 시도
+                try:
+                    resp.json()
+                    return True
+                except (ValueError, requests.exceptions.JSONDecodeError):
+                    return False
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     def _ensure_login(self):
-        if not self._logged_in:
-            self.login()
+        """로그인 상태 확인 및 필요 시 재로그인.
+
+        플래그만 확인하는 것이 아니라 실제 세션 유효성도 검증한다.
+        """
+        if self._logged_in and self._is_session_valid():
+            return
+
+        if self._logged_in:
+            # 세션이 만료된 경우
+            logger.warning("superap.io 세션 만료 감지 — 재로그인 시도")
+            notify_session_expired("superap.io", "세션 쿠키 만료")
+            self._logged_in = False
+            self._type_data = None
+            self._price_data = None
+
+        self.login()
+
+    def _request_with_recovery(self, method: str, url: str, **kwargs):
+        """세션 만료 자동 복구가 포함된 HTTP 요청 래퍼.
+
+        응답이 로그인 페이지 리다이렉트이거나 JSON 파싱 실패 시
+        세션을 재생성하고 재시도한다.
+
+        Returns:
+            requests.Response 객체
+        """
+        self._ensure_login()
+
+        for attempt in range(self.MAX_SESSION_RECOVERY + 1):
+            try:
+                resp = self.session.request(method, url, **kwargs)
+
+                # 세션 만료 감지: 로그인 페이지로 리다이렉트
+                if resp.status_code in (301, 302):
+                    location = resp.headers.get("Location", "")
+                    if "/login" in location:
+                        if attempt < self.MAX_SESSION_RECOVERY:
+                            logger.warning("superap.io 세션 만료 (리다이렉트) — 재로그인 (%d/%d)",
+                                           attempt + 1, self.MAX_SESSION_RECOVERY)
+                            notify_session_expired("superap.io", f"로그인 페이지 리다이렉트 (attempt {attempt + 1})")
+                            self._logged_in = False
+                            self._type_data = None
+                            self._price_data = None
+                            self.login()
+                            continue
+                        raise RuntimeError("superap.io 세션 복구 실패: 재로그인 후에도 리다이렉트")
+
+                # 200 응답이지만 HTML 로그인 폼인 경우 (allow_redirects=True일 때)
+                if resp.status_code == 200 and "text/html" in resp.headers.get("Content-Type", ""):
+                    if "/login" in resp.text[:1000] or "j_spring_security_check" in resp.text[:1000]:
+                        if attempt < self.MAX_SESSION_RECOVERY:
+                            logger.warning("superap.io 세션 만료 (로그인 폼) — 재로그인 (%d/%d)",
+                                           attempt + 1, self.MAX_SESSION_RECOVERY)
+                            notify_session_expired("superap.io", f"로그인 폼 응답 (attempt {attempt + 1})")
+                            self._logged_in = False
+                            self._type_data = None
+                            self._price_data = None
+                            self.login()
+                            continue
+                        raise RuntimeError("superap.io 세션 복구 실패: 재로그인 후에도 로그인 폼 반환")
+
+                return resp
+
+            except requests.RequestException as e:
+                if attempt < self.MAX_SESSION_RECOVERY:
+                    logger.warning("superap.io 요청 실패 — 재시도 (%d/%d): %s",
+                                   attempt + 1, self.MAX_SESSION_RECOVERY, e)
+                    self._logged_in = False
+                    self.login()
+                    continue
+                raise
+
+        # 여기에 도달하면 안 되지만 안전장치
+        raise RuntimeError("superap.io 요청 실패: 최대 재시도 초과")
 
     def _build_image_fields(self) -> list[tuple]:
         """image_url 필드 3개 (icon, img1, img2).
@@ -191,9 +332,8 @@ class SuperapClient:
         if self._type_data:
             return self._type_data
 
-        self._ensure_login()
         dt = self.detail_type
-        resp = self.session.get(TYPE_LIST_URL, timeout=30)
+        resp = self._request_with_recovery("GET", TYPE_LIST_URL, timeout=30)
         data = resp.json()
         if data.get("result") != 200:
             raise RuntimeError("캠페인 타입 조회 실패")
@@ -207,9 +347,8 @@ class SuperapClient:
 
     def get_publishers(self) -> list[dict]:
         """매체 타겟팅 목록 조회."""
-        self._ensure_login()
-        resp = self.session.get(
-            f"{BASE_URL}/service/reward/adver/publishers",
+        resp = self._request_with_recovery(
+            "GET", f"{BASE_URL}/service/reward/adver/publishers",
             params={"mode": "add"},
             timeout=30,
         )
@@ -223,9 +362,8 @@ class SuperapClient:
         if self._price_data is not None:
             return self._price_data
 
-        self._ensure_login()
         dt = self.detail_type
-        resp = self.session.get(PRICE_LIST_URL, timeout=30)
+        resp = self._request_with_recovery("GET", PRICE_LIST_URL, timeout=30)
         data = resp.json()
         if data.get("result") != 200:
             raise RuntimeError("가격 정보 조회 실패")
@@ -241,8 +379,7 @@ class SuperapClient:
 
     def get_all_campaigns(self) -> list[dict]:
         """전체 캠페인 목록."""
-        self._ensure_login()
-        resp = self.session.get(CAMPAIGN_LIST_URL, timeout=60)
+        resp = self._request_with_recovery("GET", CAMPAIGN_LIST_URL, timeout=60)
         data = resp.json()
         return data.get("data", [])
 
@@ -264,11 +401,10 @@ class SuperapClient:
         수정 페이지(/service/reward/adver/mod)에서 URL을 가져온다.
         언더스코어(_)로 인해 이름이 잘린 캠페인도 URL로 정확한 아이디 파악 가능.
         """
-        self._ensure_login()
         import re
         try:
-            resp = self.session.get(
-                f"{BASE_URL}/service/reward/adver/mod?ad_idx={ad_idx}",
+            resp = self._request_with_recovery(
+                "GET", f"{BASE_URL}/service/reward/adver/mod?ad_idx={ad_idx}",
                 timeout=15,
             )
             if resp.status_code != 200:
@@ -322,8 +458,8 @@ class SuperapClient:
         """수정 페이지에서 기존 ad_event_name(전환인식기준) 값을 읽어온다."""
         import re
         try:
-            resp = self.session.get(
-                f"{BASE_URL}/service/reward/adver/mod?ad_idx={ad_idx}",
+            resp = self._request_with_recovery(
+                "GET", f"{BASE_URL}/service/reward/adver/mod?ad_idx={ad_idx}",
                 timeout=15,
             )
             if resp.status_code != 200:
@@ -347,7 +483,7 @@ class SuperapClient:
             answer: 전환인식기준 (정답). 비어있으면 기본값 사용.
             channel_name: 유튜브 채널명 (스크래핑 결과). 캠페인 제목에 사용.
         """
-        self._ensure_login()
+        self._ensure_login()  # POST는 래퍼 대신 사전 검증
         type_data = self.get_type_data()
         price = self.get_price()
         dt = self.detail_type
@@ -503,7 +639,7 @@ class SuperapClient:
             existing: 기존 캠페인 데이터 (CSV에서 가져온 것)
             answer: 전환인식기준 (정답). 비어있으면 기본값 사용.
         """
-        self._ensure_login()
+        self._ensure_login()  # POST는 래퍼 대신 사전 검증
         type_data = self.get_type_data()
         price = self.get_price()
         dt = self.detail_type
@@ -589,7 +725,7 @@ class SuperapClient:
         # 서버가 500을 반환해도 실제로 수정이 적용되는 경우가 있음 → 검증
         if resp.status_code == 500:
             logger.warning("캠페인 수정 500 응답 — %s 검증 중...", username)
-            verify_resp = self.session.get(CAMPAIGN_LIST_URL, timeout=60)
+            verify_resp = self._request_with_recovery("GET", CAMPAIGN_LIST_URL, timeout=60)
             verify_data = verify_resp.json()
             for c in verify_data.get("data", []):
                 if str(c.get("ad_idx")) == str(ad_idx):
@@ -625,7 +761,7 @@ class SuperapClient:
             total_budget: 새 total_budget (None이면 기존 유지)
             answer: 새 전환인식기준 (None이면 기존 유지)
         """
-        self._ensure_login()
+        self._ensure_login()  # POST는 래퍼 대신 사전 검증
         type_data = self.get_type_data()
         price = self.get_price()
         dt = self.detail_type
@@ -709,7 +845,7 @@ class SuperapClient:
 
         # 500 검증
         if resp.status_code == 500:
-            verify_resp = self.session.get(CAMPAIGN_LIST_URL, timeout=60)
+            verify_resp = self._request_with_recovery("GET", CAMPAIGN_LIST_URL, timeout=60)
             verify_data = verify_resp.json()
             for c in verify_data.get("data", []):
                 if str(c.get("ad_idx")) == str(ad_idx):

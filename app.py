@@ -87,65 +87,89 @@ def start_scheduler(app):
         auto_campaign_job, check_campaign_completion_job, sync_remains_job,
         auto_youtube_campaign_job, check_youtube_campaign_completion_job, sync_youtube_remains_job,
     )
+    from services.telegram_notifier import notify_scheduler_failure, notify_health_check_fail
 
     scheduler = BackgroundScheduler()
 
-    def poll_job():
+    # ── 연속 실패 카운터 ──
+    _fail_counts = {}
+
+    def _run_job(job_name, func):
+        """스케줄러 작업 래퍼 — 연속 실패 시 텔레그램 알림."""
         with app.app_context():
             try:
-                process_new_orders()
-            except Exception:
-                logger.exception("폴링 작업 중 오류 발생")
+                func()
+                # 성공 시 실패 카운터 리셋
+                if _fail_counts.get(job_name, 0) > 0:
+                    logger.info("[%s] 복구됨 (이전 연속 실패 %d회)", job_name, _fail_counts[job_name])
+                _fail_counts[job_name] = 0
+            except Exception as e:
+                _fail_counts[job_name] = _fail_counts.get(job_name, 0) + 1
+                count = _fail_counts[job_name]
+                logger.exception("[%s] 오류 발생 (연속 %d회)", job_name, count)
+                # 3회 연속 실패 시, 그 이후 매 3회마다 알림
+                if count >= 3 and count % 3 == 0:
+                    notify_scheduler_failure(job_name, str(e), count)
+
+    def poll_job():
+        _run_job("주문 폴링", process_new_orders)
 
     def status_job():
-        with app.app_context():
-            try:
-                check_order_statuses()
-            except Exception:
-                logger.exception("상태 체크 중 오류 발생")
+        _run_job("상태 체크", check_order_statuses)
 
     def campaign_job():
-        with app.app_context():
-            try:
-                auto_campaign_job()
-            except Exception:
-                logger.exception("캠페인 자동 세팅 중 오류 발생")
+        _run_job("캠페인 자동 세팅", auto_campaign_job)
 
     def campaign_check_job():
-        with app.app_context():
-            try:
-                check_campaign_completion_job()
-            except Exception:
-                logger.exception("캠페인 완료 체크 중 오류 발생")
+        _run_job("캠페인 완료 체크", check_campaign_completion_job)
 
     def remains_sync_job():
-        with app.app_context():
-            try:
-                sync_remains_job()
-            except Exception:
-                logger.exception("리메인 동기화 중 오류 발생")
+        _run_job("리메인 동기화", sync_remains_job)
 
-    # ── 유튜브 스케줄러 ──
     def yt_campaign_job():
-        with app.app_context():
-            try:
-                auto_youtube_campaign_job()
-            except Exception:
-                logger.exception("유튜브 캠페인 자동 세팅 중 오류 발생")
+        _run_job("유튜브 캠페인 세팅", auto_youtube_campaign_job)
 
     def yt_campaign_check_job():
-        with app.app_context():
-            try:
-                check_youtube_campaign_completion_job()
-            except Exception:
-                logger.exception("유튜브 캠페인 완료 체크 중 오류 발생")
+        _run_job("유튜브 완료 체크", check_youtube_campaign_completion_job)
 
     def yt_remains_sync_job():
+        _run_job("유튜브 리메인 동기화", sync_youtube_remains_job)
+
+    # ── 헬스체크 ──
+    def health_check_job():
+        """10분마다 외부 서비스 연결 상태 확인."""
         with app.app_context():
+            # 1. 카페24 OAuth 토큰 확인
             try:
-                sync_youtube_remains_job()
-            except Exception:
-                logger.exception("유튜브 리메인 동기화 중 오류 발생")
+                from cafe24.auth import get_valid_token
+                token = get_valid_token()
+                if token is None:
+                    notify_health_check_fail("카페24 OAuth", "유효한 토큰 없음 - 재인증 필요")
+            except Exception as e:
+                logger.exception("헬스체크: 카페24 토큰 확인 실패")
+                notify_health_check_fail("카페24 OAuth", str(e))
+
+            # 2. superap.io 로그인 테스트
+            try:
+                from services.superap_client import SuperapClient
+                client = SuperapClient()
+                client.login()
+                logger.info("헬스체크: superap.io 로그인 정상")
+            except Exception as e:
+                logger.exception("헬스체크: superap.io 로그인 실패")
+                notify_health_check_fail("superap.io", str(e))
+
+            # 3. 인스타몬스터 API 확인
+            try:
+                from instamonster.client import get_balance
+                balance = get_balance()
+                if balance is not None:
+                    logger.info("헬스체크: 인스타몬스터 API 정상 (잔액: %.0f)", balance)
+                else:
+                    notify_health_check_fail("인스타몬스터", "잔액 조회 실패 - API 키 확인 필요")
+            except Exception as e:
+                logger.exception("헬스체크: 인스타몬스터 API 확인 실패")
+                notify_health_check_fail("인스타몬스터", str(e))
 
     # 주문 폴링: 90초마다
     scheduler.add_job(poll_job, "interval", seconds=config.POLLING_INTERVAL, id="poll_orders")
@@ -163,10 +187,12 @@ def start_scheduler(app):
     scheduler.add_job(yt_campaign_check_job, "interval", seconds=180, id="yt_campaign_check")
     # 유튜브 리메인 동기화: 3분마다
     scheduler.add_job(yt_remains_sync_job, "interval", seconds=180, id="yt_remains_sync")
+    # 헬스체크: 10분마다
+    scheduler.add_job(health_check_job, "interval", seconds=600, id="health_check")
     scheduler.start()
     logger.info(
         "스케줄러 시작 (폴링: %s초, 상태체크: 300초, 캠페인세팅: 180초, 캠페인완료체크: 180초, 리메인동기화: 180초, "
-        "유튜브캠페인: 180초, 유튜브완료체크: 180초, 유튜브리메인: 180초)",
+        "유튜브캠페인: 180초, 유튜브완료체크: 180초, 유튜브리메인: 180초, 헬스체크: 600초)",
         config.POLLING_INTERVAL,
     )
     return scheduler
