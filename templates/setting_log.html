@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}세팅 로그 — SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">세팅 로그</h1>
+    <p style="font-size:14px; color:var(--gray-500); margin-top:4px;">인스타몬스터 주문과 superap.io 캠페인의 매칭 상태를 확인합니다.</p>
+</div>
+
+<!-- 데이터 불러오기 -->
+<div class="toss-card">
+    <div style="display:flex; align-items:center; gap:16px;">
+        <button id="loadBtn" class="toss-btn toss-btn-primary" onclick="loadData()">데이터 불러오기</button>
+        <span id="statusText" style="font-size:14px; color:var(--gray-500); font-weight:500;">대기 중</span>
+    </div>
+</div>
+
+<!-- 프로그레스 -->
+<div id="progress" style="height:4px; background:var(--gray-100); border-radius:2px; overflow:hidden; display:none; margin-bottom:20px;">
+    <div style="height:100%; background:var(--blue); border-radius:2px; width:40%; animation:indeterminate 1.5s ease-in-out infinite;"></div>
+</div>
+
+<!-- 요약 카드 -->
+<div id="summaryCard" style="display:none; margin-bottom:20px;">
+    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <div class="summary-badge" onclick="filterBy('')">
+            <span class="summary-label">전체</span>
+            <span id="cnt_total" class="summary-count">0</span>
+        </div>
+        <div class="summary-badge summary-ok" onclick="filterBy('ok')">
+            <span class="summary-label">정상</span>
+            <span id="cnt_ok" class="summary-count">0</span>
+        </div>
+        <div class="summary-badge summary-completed" onclick="filterBy('completed')">
+            <span class="summary-label">완료</span>
+            <span id="cnt_completed" class="summary-count">0</span>
+        </div>
+        <div class="summary-badge summary-mismatch" onclick="filterBy('mismatch')">
+            <span class="summary-label">불일치</span>
+            <span id="cnt_mismatch" class="summary-count">0</span>
+        </div>
+        <div class="summary-badge summary-no-campaign" onclick="filterBy('no_campaign')">
+            <span class="summary-label">캠페인 없음</span>
+            <span id="cnt_no_campaign" class="summary-count">0</span>
+        </div>
+        <div class="summary-badge summary-no-order" onclick="filterBy('no_order')">
+            <span class="summary-label">주문 없음</span>
+            <span id="cnt_no_order" class="summary-count">0</span>
+        </div>
+    </div>
+</div>
+
+<!-- 필터 바 -->
+<div id="filterBar" style="display:none; margin-bottom:16px;">
+    <div style="display:flex; align-items:center; gap:12px;">
+        <label style="font-size:13px; font-weight:600; color:var(--gray-600);">매칭 상태 필터:</label>
+        <select id="filterSelect" class="toss-input" style="width:180px;" onchange="applyFilter()">
+            <option value="">전체</option>
+            <option value="ok">정상</option>
+            <option value="completed">완료</option>
+            <option value="mismatch">불일치</option>
+            <option value="no_campaign">캠페인 없음</option>
+            <option value="no_order">주문 없음</option>
+        </select>
+        <span id="filterCount" style="font-size:13px; color:var(--gray-500);"></span>
+    </div>
+</div>
+
+<!-- 크로스 체크 테이블 -->
+<div id="tableCard" class="toss-card" style="display:none;">
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>인스타 아이디</th>
+                    <th>구분</th>
+                    <th>IM 주문ID</th>
+                    <th>IM 상태</th>
+                    <th>IM 수량</th>
+                    <th>IM 리메인</th>
+                    <th>캠페인 번호</th>
+                    <th>캠페인 상태</th>
+                    <th>캠페인 예산</th>
+                    <th>실행건수</th>
+                    <th>매칭 상태</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 토스트 -->
+<div id="toast" style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--gray-900); color:#fff; padding:12px 24px; border-radius:8px; font-size:14px; font-weight:500; opacity:0; transition:all .3s ease; z-index:1000; pointer-events:none;"></div>
+
+<style>
+@keyframes indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+.summary-badge {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px 20px; border-radius: 10px;
+    background: var(--gray-50); border: 1px solid var(--gray-200);
+    cursor: pointer; transition: all .15s; min-width: 80px;
+}
+.summary-badge:hover { border-color: var(--gray-400); }
+.summary-badge.active { border-color: var(--blue); background: var(--blue-light, #eef4ff); }
+.summary-label { font-size: 12px; font-weight: 600; color: var(--gray-500); margin-bottom: 4px; }
+.summary-count { font-size: 22px; font-weight: 700; color: var(--gray-900); }
+.summary-ok .summary-count { color: #16a34a; }
+.summary-completed .summary-count { color: #2563eb; }
+.summary-mismatch .summary-count { color: #dc2626; }
+.summary-no-campaign .summary-count { color: #ea580c; }
+.summary-no-order .summary-count { color: #6b7280; }
+.row-mismatch { background: #fff5f5 !important; }
+.row-mismatch:hover { background: #ffe8e8 !important; }
+.row-no-campaign { background: #fff7ed !important; }
+.row-no-campaign:hover { background: #ffedd5 !important; }
+.row-no-order { background: #f9fafb !important; }
+.row-no-order:hover { background: #f3f4f6 !important; }
+.match-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; }
+.match-ok { background:#dcfce7; color:#16a34a; }
+.match-completed { background:#dbeafe; color:#2563eb; }
+.match-mismatch { background:#fee2e2; color:#dc2626; }
+.match-no-campaign { background:#ffedd5; color:#ea580c; }
+.match-no-order { background:#f3f4f6; color:#6b7280; }
+.type-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; }
+.type-new { background:#fef3c7; color:#d97706; }
+.type-extend { background:#dbeafe; color:#2563eb; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allRows = [];
+let currentFilter = '';
+
+function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.opacity = '1';
+    el.style.transform = 'translateX(-50%) translateY(0)';
+    setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateX(-50%) translateY(80px)';
+    }, 2000);
+}
+
+function setStatus(msg) {
+    document.getElementById('statusText').textContent = msg;
+}
+
+function setLoading(on) {
+    document.getElementById('progress').style.display = on ? 'block' : 'none';
+    document.getElementById('loadBtn').disabled = on;
+}
+
+function esc(str) {
+    if (str == null) return '-';
+    const d = document.createElement('div');
+    d.textContent = String(str);
+    return d.innerHTML;
+}
+
+const MATCH_LABELS = {
+    ok: '정상',
+    completed: '완료',
+    mismatch: '불일치',
+    no_campaign: '캠페인 없음',
+    no_order: '주문 없음',
+};
+
+async function loadData() {
+    setLoading(true);
+    setStatus('데이터 불러오는 중... (인스타몬스터 + superap.io 조회)');
+    try {
+        const resp = await fetch('{{ url_for("admin.api_setting_log_data") }}');
+        const data = await resp.json();
+        if (!data.ok) {
+            showToast(data.error || '데이터 조회 실패');
+            setStatus('오류 발생');
+            return;
+        }
+        allRows = data.rows;
+        renderSummary(data.summary);
+        currentFilter = '';
+        document.getElementById('filterSelect').value = '';
+        applyFilter();
+        document.getElementById('summaryCard').style.display = 'block';
+        document.getElementById('filterBar').style.display = 'block';
+        document.getElementById('tableCard').style.display = 'block';
+        setStatus(`완료 — 총 ${data.summary.total}건`);
+    } catch (e) {
+        showToast('네트워크 오류: ' + e.message);
+        setStatus('오류 발생');
+    } finally {
+        setLoading(false);
+    }
+}
+
+function renderSummary(summary) {
+    document.getElementById('cnt_total').textContent = summary.total || 0;
+    document.getElementById('cnt_ok').textContent = summary.ok || 0;
+    document.getElementById('cnt_completed').textContent = summary.completed || 0;
+    document.getElementById('cnt_mismatch').textContent = summary.mismatch || 0;
+    document.getElementById('cnt_no_campaign').textContent = summary.no_campaign || 0;
+    document.getElementById('cnt_no_order').textContent = summary.no_order || 0;
+}
+
+function filterBy(status) {
+    currentFilter = status;
+    document.getElementById('filterSelect').value = status;
+    applyFilter();
+    // 배지 active 표시
+    document.querySelectorAll('.summary-badge').forEach(el => el.classList.remove('active'));
+    const badges = document.querySelectorAll('.summary-badge');
+    const idx = ['', 'ok', 'completed', 'mismatch', 'no_campaign', 'no_order'].indexOf(status);
+    if (idx >= 0 && badges[idx]) badges[idx].classList.add('active');
+}
+
+function applyFilter() {
+    const filter = document.getElementById('filterSelect').value;
+    currentFilter = filter;
+    const filtered = filter ? allRows.filter(r => r.match_status === filter) : allRows;
+    renderTable(filtered);
+    document.getElementById('filterCount').textContent =
+        filter ? `${filtered.length}건 표시 중` : '';
+
+    // 배지 active 동기화
+    document.querySelectorAll('.summary-badge').forEach(el => el.classList.remove('active'));
+    const badges = document.querySelectorAll('.summary-badge');
+    const idx = ['', 'ok', 'completed', 'mismatch', 'no_campaign', 'no_order'].indexOf(filter);
+    if (idx >= 0 && badges[idx]) badges[idx].classList.add('active');
+}
+
+function renderTable(rows) {
+    const body = document.getElementById('tableBody');
+    body.innerHTML = '';
+
+    for (const r of rows) {
+        const tr = document.createElement('tr');
+        if (r.match_status === 'mismatch') tr.className = 'row-mismatch';
+        else if (r.match_status === 'no_campaign') tr.className = 'row-no-campaign';
+        else if (r.match_status === 'no_order') tr.className = 'row-no-order';
+
+        const matchBadge = `<span class="match-badge match-${r.match_status}">${esc(MATCH_LABELS[r.match_status] || r.match_status)}</span>`;
+
+        const typeBadge = r.setting_type === '신규'
+            ? '<span class="type-badge type-new">신규</span>'
+            : r.setting_type === '연장'
+            ? '<span class="type-badge type-extend">연장</span>'
+            : '-';
+
+        tr.innerHTML = `
+            <td>${esc(r.username)}</td>
+            <td>${typeBadge}</td>
+            <td>${r.im_order_id != null ? r.im_order_id : '-'}</td>
+            <td>${esc(r.im_status)}</td>
+            <td>${r.im_quantity != null ? r.im_quantity : '-'}</td>
+            <td>${r.im_remains != null ? r.im_remains : '-'}</td>
+            <td>${r.ad_idx != null ? r.ad_idx : '-'}</td>
+            <td>${esc(r.campaign_status)}</td>
+            <td>${r.campaign_budget != null ? r.campaign_budget : '-'}</td>
+            <td>${r.campaign_action != null ? r.campaign_action : '-'}</td>
+            <td>${matchBadge}</td>`;
+
+        body.appendChild(tr);
+    }
+}
+</script>
+{% endblock %}

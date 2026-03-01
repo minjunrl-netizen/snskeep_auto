@@ -1,0 +1,12 @@
+{
+  "title_template": "인스타 팔로우 하고 포인트 적립받기 (언팔x) {username}",
+  "description": "",
+  "budget_multiplier": 1.2,
+  "duration_days": 30,
+  "geo": "kr",
+  "event_limit": "1",
+  "img1_url": "",
+  "img2_url": "",
+  "adsome_type": "RCPA",
+  "target_media_ids": []
+}

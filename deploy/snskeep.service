@@ -1,0 +1,15 @@
+[Unit]
+Description=SNS Keep Auto Order Server
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/snskeep
+EnvironmentFile=/home/ubuntu/snskeep/.env
+ExecStart=/home/ubuntu/snskeep/venv/bin/gunicorn -c gunicorn.conf.py wsgi:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

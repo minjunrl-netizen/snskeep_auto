@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}설정 - SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">설정</h1>
+</div>
+
+<div class="toss-settings-grid">
+    <!-- 카페24 OAuth -->
+    <div class="toss-card">
+        <div class="toss-card-header">카페24 OAuth 인증</div>
+
+        {% if token %}
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">상태</span>
+            <span class="toss-setting-value">
+                {% if token_valid %}
+                <span class="toss-badge toss-badge-success">인증됨</span>
+                {% else %}
+                <span class="toss-badge toss-badge-error">만료됨</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">액세스 토큰 만료</span>
+            <span class="toss-setting-value">{{ token.expires_at.strftime('%Y-%m-%d %H:%M') if token.expires_at else '-' }}</span>
+        </div>
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">리프레시 토큰 만료</span>
+            <span class="toss-setting-value">{{ token.refresh_expires_at.strftime('%Y-%m-%d %H:%M') if token.refresh_expires_at else '-' }}</span>
+        </div>
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">마지막 갱신</span>
+            <span class="toss-setting-value">{{ token.updated_at.strftime('%Y-%m-%d %H:%M') if token.updated_at else '-' }}</span>
+        </div>
+        {% else %}
+        <div class="toss-empty" style="padding:24px;">인증 정보가 없습니다</div>
+        {% endif %}
+
+        <div style="margin-top:20px;">
+            <a href="{{ auth_url }}" class="toss-btn toss-btn-primary">
+                {% if token %}재인증{% else %}카페24 인증하기{% endif %}
+            </a>
+        </div>
+    </div>
+
+    <!-- 환경 설정 -->
+    <div class="toss-card">
+        <div class="toss-card-header">환경 설정</div>
+
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">카페24 Mall ID</span>
+            <span class="toss-setting-value">{{ mall_id or '미설정' }}</span>
+        </div>
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">인스타몬스터 API</span>
+            <span class="toss-setting-value">
+                {% if api_key_set %}
+                <span class="toss-badge toss-badge-success">설정됨</span>
+                {% else %}
+                <span class="toss-badge toss-badge-error">미설정</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="toss-setting-row">
+            <span class="toss-setting-key">폴링 간격</span>
+            <span class="toss-setting-value">{{ polling_interval }}초</span>
+        </div>
+
+        <p style="color:var(--gray-500);font-size:13px;margin-top:20px;">
+            환경 변수를 변경하려면 <code>.env</code> 파일을 수정하고 서버를 재시작하세요.
+        </p>
+    </div>
+</div>
+{% endblock %}

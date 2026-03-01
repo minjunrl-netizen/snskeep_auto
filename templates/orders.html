@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}주문 현황 - SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">주문 처리 현황</h1>
+</div>
+
+<form method="GET" class="toss-filter-bar">
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">상태</span>
+        <select name="status" class="toss-select">
+            <option value="">전체</option>
+            <option value="shipping" {% if filter_status == 'shipping' %}selected{% endif %}>배송중</option>
+            <option value="delivered" {% if filter_status == 'delivered' %}selected{% endif %}>배송완료</option>
+            <option value="error" {% if filter_status == 'error' %}selected{% endif %}>에러</option>
+            <option value="needs_review" {% if filter_status == 'needs_review' %}selected{% endif %}>검토필요</option>
+            <option value="partial" {% if filter_status == 'partial' %}selected{% endif %}>부분완료</option>
+            <option value="canceled" {% if filter_status == 'canceled' %}selected{% endif %}>취소</option>
+        </select>
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">시작일</span>
+        <input type="date" name="start_date" class="toss-input" value="{{ start_date or '' }}">
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">종료일</span>
+        <input type="date" name="end_date" class="toss-input" value="{{ end_date or '' }}">
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">&nbsp;</span>
+        <button type="submit" class="toss-btn toss-btn-primary toss-btn-sm">검색</button>
+    </div>
+</form>
+
+<div class="toss-card">
+    {% if orders %}
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>카페24 주문번호</th>
+                    <th>인스타몬스터 ID</th>
+                    <th>서비스 ID</th>
+                    <th>링크</th>
+                    <th>수량</th>
+                    <th>상태</th>
+                    <th>에러 메시지</th>
+                    <th>처리 시각</th>
+                    <th>작업</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in orders %}
+                <tr>
+                    <td style="font-weight:600;">{{ order.cafe24_order_id }}</td>
+                    <td>{{ order.insta_order_id or '-' }}</td>
+                    <td>{{ order.service_id or '-' }}</td>
+                    <td>
+                        {% if order.link %}
+                        <a href="{{ order.link }}" target="_blank" class="toss-link">{{ order.link }}</a>
+                        {% else %}<span style="color:var(--gray-400);">-</span>{% endif %}
+                    </td>
+                    <td>{{ order.quantity }}</td>
+                    <td>
+                        {% if order.status == 'delivered' %}
+                        <span class="toss-badge toss-badge-success">배송완료</span>
+                        {% elif order.status == 'shipping' %}
+                        <span class="toss-badge" style="background:#e8f3ff;color:#3182f6;">배송중</span>
+                        {% elif order.status == 'error' %}
+                        <span class="toss-badge toss-badge-error">에러</span>
+                        {% elif order.status == 'partial' %}
+                        <span class="toss-badge toss-badge-warning">부분완료</span>
+                        {% elif order.status == 'canceled' %}
+                        <span class="toss-badge toss-badge-muted">취소</span>
+                        {% elif order.status == 'needs_review' %}
+                        <span class="toss-badge toss-badge-warning">검토필요</span>
+                        {% else %}
+                        <span class="toss-badge toss-badge-muted">{{ order.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="color:var(--gray-500);font-size:13px;">{{ order.error_message or '-' }}</td>
+                    <td style="color:var(--gray-500);">{{ order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '-' }}</td>
+                    <td>
+                        {% if order.status in ('error', 'needs_review', 'partial', 'canceled') %}
+                        <form method="POST" action="{{ url_for('admin.retry_order', order_id=order.id) }}" style="display:inline;">
+                            <button type="submit" class="toss-btn toss-btn-warning toss-btn-sm"
+                                    onclick="return confirm('재처리하시겠습니까?')">재처리</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="toss-empty">표시할 주문이 없습니다</div>
+    {% endif %}
+</div>
+{% endblock %}

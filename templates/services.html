@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}서비스 목록 - SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">인스타몬스터 서비스 목록</h1>
+    <a href="{{ url_for('admin.services', refresh=1) }}" class="toss-btn toss-btn-secondary">새로고침</a>
+</div>
+
+{% if services %}
+<div class="toss-card">
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>서비스 ID</th>
+                    <th>이름</th>
+                    <th>카테고리</th>
+                    <th>가격</th>
+                    <th>최소 수량</th>
+                    <th>최대 수량</th>
+                    <th>타입</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in services %}
+                <tr>
+                    <td style="font-weight:600;">{{ s.service }}</td>
+                    <td>{{ s.name }}</td>
+                    <td><span class="toss-badge toss-badge-muted">{{ s.category or '-' }}</span></td>
+                    <td style="font-weight:600;">&#8361;{{ s.rate }}</td>
+                    <td>{{ s.min }}</td>
+                    <td>{{ s.max }}</td>
+                    <td>{{ s.type or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="toss-card">
+    <div class="toss-empty">
+        서비스 목록을 불러올 수 없습니다. API 키를 확인해주세요.
+    </div>
+</div>
+{% endif %}
+{% endblock %}

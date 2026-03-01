@@ -1,0 +1,684 @@
+{% extends "base.html" %}
+{% block title %}상품 매핑 - SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">상품 매핑 관리</h1>
+    <button class="toss-btn toss-btn-primary" data-bs-toggle="modal" data-bs-target="#addMappingModal">매핑 추가</button>
+</div>
+
+<div class="toss-card">
+    {% if mappings %}
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>카페24 상품</th>
+                    <th>인스타몬스터 서비스</th>
+                    <th>주문 타입</th>
+                    <th>수량</th>
+                    <th>상태</th>
+                    <th>작업</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in mappings %}
+                <tr>
+                    <td>
+                        <span style="font-weight:600;">{{ m.cafe24_product_no }}</span>
+                        {% if m.cafe24_product_name %}
+                        <span style="color:var(--gray-500);font-size:12px;display:block;">{{ m.cafe24_product_name }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if m.order_type == 'package' and m.get_package_config() %}
+                        {% for svc in m.get_package_config() %}
+                        <div style="{% if not loop.first %}margin-top:6px;padding-top:6px;border-top:1px solid var(--gray-100);{% endif %}">
+                            <span style="color:var(--gray-500);font-size:12px;">#{{ svc.service_id }}</span>
+                            {{ svc.service_name or '' }}
+                            {% if svc.type == 'subscription' %}
+                            <span class="toss-badge toss-badge-warning" style="margin-left:4px;font-size:11px;">구독</span>
+                            {% else %}
+                            <span class="toss-badge toss-badge-muted" style="margin-left:4px;font-size:11px;">일반</span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <span style="color:var(--gray-500);font-size:12px;">#{{ m.insta_service_id }}</span>
+                        {{ m.insta_service_name or '' }}
+                        {% if m.service_map %}
+                        <span class="toss-badge toss-badge-warning" style="margin-left:4px;">조건분기</span>
+                        {% endif %}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if m.order_type == 'package' %}
+                        <span class="toss-badge toss-badge-primary" style="background:#3182f6;color:#fff;">패키지</span>
+                        {% elif m.order_type == 'subscription' %}
+                        <span class="toss-badge toss-badge-warning">구독(자동)</span>
+                        {% else %}
+                        <span class="toss-badge toss-badge-muted">일반</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-size:13px;">
+                        {% if m.order_type == 'package' and m.get_package_config() %}
+                        {% for svc in m.get_package_config() %}
+                        <div style="{% if not loop.first %}margin-top:6px;padding-top:6px;border-top:1px solid var(--gray-100);{% endif %}">
+                            {% if svc.type == 'subscription' %}
+                            <span style="color:var(--gray-500);">{{ svc.min|default(0) }}~{{ svc.max|default(0) }}개 x {{ svc.posts|default(0) }}게시물</span>
+                            {% else %}
+                            <span style="color:var(--gray-500);">{{ svc.quantity|default(0) }}개</span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                        {% elif m.order_type == 'package' %}
+                        <span style="color:var(--gray-500);">복수 서비스</span>
+                        {% elif m.order_type == 'subscription' %}
+                        <span style="color:var(--gray-500);">딜레이: {{ m.sub_delay }}분</span>
+                        {% else %}
+                        <span class="toss-badge toss-badge-success">옵션추출</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if m.is_active %}
+                        <span class="toss-badge toss-badge-success">활성</span>
+                        {% else %}
+                        <span class="toss-badge toss-badge-muted">비활성</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <button class="toss-btn toss-btn-secondary toss-btn-sm edit-btn"
+                                data-id="{{ m.id }}"
+                                data-product-no="{{ m.cafe24_product_no }}"
+                                data-product-name="{{ m.cafe24_product_name or '' }}"
+                                data-service-id="{{ m.insta_service_id }}"
+                                data-order-type="{{ m.order_type }}"
+                                data-quantity-option-name="{{ m.quantity_option_name or '' }}"
+                                data-link-source="{{ m.link_source }}"
+                                data-option-name="{{ m.option_name or '' }}"
+                                data-service-map="{{ m.service_map or '' }}"
+                                data-package-config="{{ m.package_config or '' }}"
+                                data-sub-username-option="{{ m.sub_username_option or '' }}"
+                                data-sub-likes-option="{{ m.sub_likes_option or '' }}"
+                                data-sub-posts-option="{{ m.sub_posts_option or '' }}"
+                                data-sub-delay="{{ m.sub_delay }}"
+                                data-is-active="{{ 'true' if m.is_active else 'false' }}"
+                                data-bs-toggle="modal" data-bs-target="#editMappingModal">
+                            수정
+                        </button>
+                        <form method="POST" action="{{ url_for('admin.delete_mapping', mapping_id=m.id) }}" style="display:inline;">
+                            <button type="submit" class="toss-btn toss-btn-danger toss-btn-sm"
+                                    onclick="return confirm('정말 삭제하시겠습니까?')">삭제</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="toss-empty">등록된 매핑이 없습니다. 매핑을 추가해주세요.</div>
+    {% endif %}
+</div>
+
+<!-- ══ 서비스 옵션 (재사용용) ══ -->
+{% macro service_options() %}
+{% for s in insta_services %}
+<option value="{{ s.service }}" data-name="{{ s.name }}">[{{ s.service }}] {{ s.name }} (&#8361;{{ s.rate }})</option>
+{% endfor %}
+{% endmacro %}
+
+<!-- ══ 조건부 매핑 UI 매크로 ══ -->
+{% macro service_map_section(target) %}
+<hr style="border-color:var(--gray-100);margin:24px 0;">
+<div class="toss-card-header" style="margin-bottom:12px;">
+    조건부 서비스 매핑 <span style="color:var(--gray-400);font-size:12px;">(선택사항)</span>
+</div>
+<div style="background:var(--blue-50, #e8f3ff);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+    <span style="color:var(--blue, #3182f6);font-size:13px;font-weight:600;">옵션 값에 따라 서비스 자동 분기</span>
+    <span style="color:var(--gray-600);font-size:13px;display:block;margin-top:4px;">
+        설정하면 고객이 선택한 옵션 값에 따라 다른 인스타몬스터 서비스로 발주됩니다.<br>
+        예: 성별=여성 → 여성 팔로워 서비스, 성별=남성 → 남성 팔로워 서비스
+    </span>
+</div>
+<div class="toss-form-group">
+    <label class="toss-label">조건 옵션명</label>
+    <input type="text" class="toss-input smap-option-name" data-for="{{ target }}"
+           placeholder="예: 성별, 연령 (비우면 조건분기 사용 안 함)">
+</div>
+<div class="smap-entries" data-for="{{ target }}"></div>
+<button type="button" class="toss-btn toss-btn-ghost toss-btn-sm smap-add-btn" data-for="{{ target }}" style="margin-top:8px;">+ 조건 추가</button>
+<textarea name="service_map" class="smap-json" data-for="{{ target }}" style="display:none;"></textarea>
+{% endmacro %}
+
+<!-- ══ 매핑 추가 모달 ══ -->
+<div class="modal fade toss-modal" id="addMappingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('admin.add_mapping') }}" class="smap-form" data-target="add">
+                <div class="modal-header">
+                    <h5 class="modal-title">매핑 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {% if has_oauth and cafe24_products %}
+                    <div class="toss-form-group">
+                        <label class="toss-label">카페24 상품 선택</label>
+                        <select class="toss-select cafe24-product-select" data-target="add">
+                            <option value="">상품을 선택하세요</option>
+                            {% for p in cafe24_products %}
+                            <option value="{{ p.product_no }}" data-name="{{ p.product_name }}">
+                                [{{ p.product_no }}] {{ p.product_name }}{% if p.price %} ({{ p.price }}원){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <input type="hidden" name="cafe24_product_no" class="cafe24-product-no-hidden" data-for="add" required>
+                        <input type="hidden" name="cafe24_product_name" class="cafe24-product-name-hidden" data-for="add">
+                    </div>
+                    {% else %}
+                    <div class="toss-form-group">
+                        <label class="toss-label">카페24 상품번호</label>
+                        <input type="number" name="cafe24_product_no" class="toss-input" required placeholder="상품번호 입력">
+                    </div>
+                    <div class="toss-form-group">
+                        <label class="toss-label">카페24 상품명 (표시용)</label>
+                        <input type="text" name="cafe24_product_name" class="toss-input" placeholder="예: 인스타 팔로워">
+                    </div>
+                    {% endif %}
+                    <div class="toss-form-group">
+                        <label class="toss-label">인스타몬스터 서비스 (기본)</label>
+                        <select name="insta_service_id" class="toss-select" required>
+                            <option value="">서비스를 선택하세요</option>
+                            {{ service_options() }}
+                        </select>
+                        <button type="button" class="toss-btn toss-btn-ghost toss-btn-sm refresh-services-btn" style="margin-top:8px;">서비스 새로고침</button>
+                    </div>
+
+                    <hr style="border-color:var(--gray-100);margin:24px 0;">
+                    <div class="toss-form-group">
+                        <label class="toss-label">주문 타입</label>
+                        <select name="order_type" class="toss-select order-type-select" data-target="add">
+                            <option value="default">일반 주문 (팔로워, 좋아요 등)</option>
+                            <option value="subscription">구독/자동 주문 (새 게시물 자동 좋아요)</option>
+                            <option value="package">패키지 (복수 서비스 동시 발주)</option>
+                        </select>
+                    </div>
+
+                    <div class="default-settings" data-for="add">
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">수량 설정</div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">수량 옵션명</label>
+                            <input type="text" name="quantity_option_name" class="toss-input" placeholder="비워두면 '수량/개수' 키워드로 자동 감지">
+                            <span style="color:var(--gray-400);font-size:12px;margin-top:4px;display:block;">
+                                옵션에서 수량 추출 실패 시 오류 처리되어 수동 확인합니다
+                            </span>
+                        </div>
+
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">링크 설정</div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">링크 추출 위치</label>
+                            <select name="link_source" class="toss-select">
+                                <option value="option">상품 옵션</option>
+                                <option value="memo">주문 메모</option>
+                            </select>
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">링크 옵션명</label>
+                            <input type="text" name="option_name" class="toss-input" placeholder="비우면 모든 옵션에서 링크 탐색">
+                        </div>
+
+                        {{ service_map_section("add") }}
+                    </div>
+
+                    <div class="subscription-settings" data-for="add" style="display:none;">
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">구독 옵션 매핑</div>
+                        <div style="background:var(--blue-50, #e8f3ff);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+                            <span style="color:var(--blue, #3182f6);font-size:13px;font-weight:600;">자동 감지 지원</span>
+                            <span style="color:var(--gray-600);font-size:13px;display:block;margin-top:4px;">
+                                옵션명을 비워두면 키워드로 자동 감지합니다.
+                            </span>
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">인스타 아이디 옵션명</label>
+                            <input type="text" name="sub_username_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">좋아요 수량 옵션명</label>
+                            <input type="text" name="sub_likes_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">게시물 수량 옵션명</label>
+                            <input type="text" name="sub_posts_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">구독 설정</div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">딜레이 (분)</label>
+                            <input type="number" name="sub_delay" class="toss-input" value="0">
+                        </div>
+                    </div>
+
+                    <div class="package-settings" data-for="add" style="display:none;">
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">패키지 설정</div>
+                        <div style="background:var(--blue-50, #e8f3ff);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+                            <span style="color:var(--blue, #3182f6);font-size:13px;font-weight:600;">1건 주문 → 복수 서비스 동시 발주</span>
+                            <span style="color:var(--gray-600);font-size:13px;display:block;margin-top:4px;">
+                                고객의 인스타 아이디로 여러 서비스를 한번에 발주합니다.
+                            </span>
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">인스타 아이디 옵션명</label>
+                            <input type="text" name="sub_username_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <div class="pkg-entries" data-for="add"></div>
+                        <button type="button" class="toss-btn toss-btn-ghost toss-btn-sm pkg-add-btn" data-for="add" style="margin-top:8px;">+ 서비스 추가</button>
+                        <textarea name="package_config" class="pkg-json" data-for="add" style="display:none;"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="toss-btn toss-btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="submit" class="toss-btn toss-btn-primary">추가</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ══ 매핑 수정 모달 ══ -->
+<div class="modal fade toss-modal" id="editMappingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" id="editMappingForm" class="smap-form" data-target="edit">
+                <div class="modal-header">
+                    <h5 class="modal-title">매핑 수정</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {% if has_oauth and cafe24_products %}
+                    <div class="toss-form-group">
+                        <label class="toss-label">카페24 상품 선택</label>
+                        <select class="toss-select cafe24-product-select" data-target="edit" id="edit_product_select">
+                            <option value="">상품을 선택하세요</option>
+                            {% for p in cafe24_products %}
+                            <option value="{{ p.product_no }}" data-name="{{ p.product_name }}">
+                                [{{ p.product_no }}] {{ p.product_name }}{% if p.price %} ({{ p.price }}원){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <input type="hidden" name="cafe24_product_no" id="edit_product_no" class="cafe24-product-no-hidden" data-for="edit" required>
+                        <input type="hidden" name="cafe24_product_name" id="edit_product_name" class="cafe24-product-name-hidden" data-for="edit">
+                    </div>
+                    {% else %}
+                    <div class="toss-form-group">
+                        <label class="toss-label">카페24 상품번호</label>
+                        <input type="number" name="cafe24_product_no" id="edit_product_no" class="toss-input" required>
+                    </div>
+                    <div class="toss-form-group">
+                        <label class="toss-label">카페24 상품명</label>
+                        <input type="text" name="cafe24_product_name" id="edit_product_name" class="toss-input">
+                    </div>
+                    {% endif %}
+                    <div class="toss-form-group">
+                        <label class="toss-label">인스타몬스터 서비스 (기본)</label>
+                        <select name="insta_service_id" id="edit_service_id" class="toss-select" required>
+                            <option value="">서비스를 선택하세요</option>
+                            {{ service_options() }}
+                        </select>
+                    </div>
+
+                    <hr style="border-color:var(--gray-100);margin:24px 0;">
+                    <div class="toss-form-group">
+                        <label class="toss-label">주문 타입</label>
+                        <select name="order_type" id="edit_order_type" class="toss-select order-type-select" data-target="edit">
+                            <option value="default">일반 주문</option>
+                            <option value="subscription">구독/자동 주문</option>
+                        </select>
+                    </div>
+
+                    <div class="default-settings" data-for="edit">
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">수량 설정</div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">수량 옵션명</label>
+                            <input type="text" name="quantity_option_name" id="edit_quantity_option_name" class="toss-input">
+                            <span style="color:var(--gray-400);font-size:12px;margin-top:4px;display:block;">
+                                옵션에서 수량 추출 실패 시 오류 처리되어 수동 확인합니다
+                            </span>
+                        </div>
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">링크 설정</div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">링크 추출 위치</label>
+                            <select name="link_source" id="edit_link_source" class="toss-select">
+                                <option value="option">상품 옵션</option>
+                                <option value="memo">주문 메모</option>
+                            </select>
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">링크 옵션명</label>
+                            <input type="text" name="option_name" id="edit_option_name" class="toss-input">
+                        </div>
+
+                        {{ service_map_section("edit") }}
+                    </div>
+
+                    <div class="subscription-settings" data-for="edit" style="display:none;">
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">구독 옵션 매핑</div>
+                        <div style="background:var(--blue-50, #e8f3ff);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+                            <span style="color:var(--blue, #3182f6);font-size:13px;font-weight:600;">자동 감지 지원</span>
+                            <span style="color:var(--gray-600);font-size:13px;display:block;margin-top:4px;">
+                                옵션명을 비워두면 키워드로 자동 감지합니다.
+                            </span>
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">인스타 아이디 옵션명</label>
+                            <input type="text" name="sub_username_option" id="edit_sub_username_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">좋아요 수량 옵션명</label>
+                            <input type="text" name="sub_likes_option" id="edit_sub_likes_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">게시물 수량 옵션명</label>
+                            <input type="text" name="sub_posts_option" id="edit_sub_posts_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">구독 설정</div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">딜레이 (분)</label>
+                            <input type="number" name="sub_delay" id="edit_sub_delay" class="toss-input">
+                        </div>
+                    </div>
+
+                    <div class="package-settings" data-for="edit" style="display:none;">
+                        <hr style="border-color:var(--gray-100);margin:24px 0;">
+                        <div class="toss-card-header" style="margin-bottom:12px;">패키지 설정</div>
+                        <div style="background:var(--blue-50, #e8f3ff);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+                            <span style="color:var(--blue, #3182f6);font-size:13px;font-weight:600;">1건 주문 → 복수 서비스 동시 발주</span>
+                            <span style="color:var(--gray-600);font-size:13px;display:block;margin-top:4px;">
+                                고객의 인스타 아이디로 여러 서비스를 한번에 발주합니다.
+                            </span>
+                        </div>
+                        <div class="toss-form-group">
+                            <label class="toss-label">인스타 아이디 옵션명</label>
+                            <input type="text" name="sub_username_option" id="edit_pkg_username_option" class="toss-input" placeholder="비워두면 자동 감지">
+                        </div>
+                        <div class="pkg-entries" data-for="edit"></div>
+                        <button type="button" class="toss-btn toss-btn-ghost toss-btn-sm pkg-add-btn" data-for="edit" style="margin-top:8px;">+ 서비스 추가</button>
+                        <textarea name="package_config" class="pkg-json" data-for="edit" style="display:none;"></textarea>
+                    </div>
+
+                    <hr style="border-color:var(--gray-100);margin:24px 0;">
+                    <div class="toss-form-group">
+                        <label class="toss-label">활성 상태</label>
+                        <select name="is_active" id="edit_is_active" class="toss-select">
+                            <option value="true">활성</option>
+                            <option value="false">비활성</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="toss-btn toss-btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="submit" class="toss-btn toss-btn-primary">저장</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── 서비스 옵션 HTML (조건 매핑 행 드롭다운용) ──
+var SERVICE_OPTIONS = '<option value="">서비스 선택</option>' +
+{% for s in insta_services %}
+'<option value="{{ s.service }}" data-name="{{ s.name }}">[{{ s.service }}] {{ s.name }}</option>' +
+{% endfor %}
+'';
+
+// ── 주문 타입 전환 ──
+function toggleOrderType(select) {
+    var target = select.dataset.target;
+    var defaultEl = document.querySelector('.default-settings[data-for="' + target + '"]');
+    var subEl = document.querySelector('.subscription-settings[data-for="' + target + '"]');
+    var pkgEl = document.querySelector('.package-settings[data-for="' + target + '"]');
+    if (defaultEl) defaultEl.style.display = 'none';
+    if (subEl) subEl.style.display = 'none';
+    if (pkgEl) pkgEl.style.display = 'none';
+    if (select.value === 'subscription') {
+        if (subEl) subEl.style.display = 'block';
+    } else if (select.value === 'package') {
+        if (pkgEl) pkgEl.style.display = 'block';
+    } else {
+        if (defaultEl) defaultEl.style.display = 'block';
+    }
+}
+document.querySelectorAll('.order-type-select').forEach(function(sel) {
+    toggleOrderType(sel);
+    sel.addEventListener('change', function() { toggleOrderType(this); });
+});
+
+// ── 카페24 상품 드롭다운 → hidden 필드 동기화 ──
+document.querySelectorAll('.cafe24-product-select').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+        var target = this.dataset.target;
+        var opt = this.options[this.selectedIndex];
+        var noInput = document.querySelector('.cafe24-product-no-hidden[data-for="' + target + '"]');
+        var nameInput = document.querySelector('.cafe24-product-name-hidden[data-for="' + target + '"]');
+        if (noInput) noInput.value = this.value;
+        if (nameInput) nameInput.value = opt ? (opt.dataset.name || '') : '';
+    });
+});
+
+// ── 조건부 서비스 매핑 UI ──
+function smapAddRow(target, val, serviceId) {
+    var container = document.querySelector('.smap-entries[data-for="' + target + '"]');
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
+    row.className = 'smap-row';
+    row.innerHTML =
+        '<input type="text" class="toss-input smap-val" placeholder="옵션값 (예: 여성)" style="flex:1;" value="' + (val || '') + '">' +
+        '<select class="toss-select smap-svc" style="flex:2;">' + SERVICE_OPTIONS + '</select>' +
+        '<button type="button" class="toss-btn toss-btn-danger toss-btn-sm smap-del">X</button>';
+    container.appendChild(row);
+    if (serviceId) row.querySelector('.smap-svc').value = serviceId;
+    row.querySelector('.smap-del').addEventListener('click', function() { row.remove(); });
+}
+
+document.querySelectorAll('.smap-add-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { smapAddRow(this.dataset.for); });
+});
+
+function buildServiceMapJSON(target) {
+    var optName = document.querySelector('.smap-option-name[data-for="' + target + '"]').value.trim();
+    var jsonField = document.querySelector('.smap-json[data-for="' + target + '"]');
+    if (!optName) { jsonField.value = ''; return; }
+    var rows = document.querySelectorAll('.smap-entries[data-for="' + target + '"] .smap-row');
+    var map = {};
+    rows.forEach(function(row) {
+        var v = row.querySelector('.smap-val').value.trim();
+        var sel = row.querySelector('.smap-svc');
+        var sid = parseInt(sel.value);
+        var sname = sel.options[sel.selectedIndex] ? (sel.options[sel.selectedIndex].dataset.name || '') : '';
+        if (v && sid) map[v] = {service_id: sid, service_name: sname};
+    });
+    if (Object.keys(map).length === 0) { jsonField.value = ''; return; }
+    jsonField.value = JSON.stringify({option_name: optName, map: map});
+}
+
+// 폼 submit 시 JSON 빌드
+document.querySelectorAll('.smap-form').forEach(function(form) {
+    form.addEventListener('submit', function() {
+        buildServiceMapJSON(this.dataset.target);
+        buildPackageConfigJSON(this.dataset.target);
+    });
+});
+
+function loadServiceMap(target, jsonStr) {
+    // 기존 행 제거
+    var container = document.querySelector('.smap-entries[data-for="' + target + '"]');
+    container.innerHTML = '';
+    var optNameInput = document.querySelector('.smap-option-name[data-for="' + target + '"]');
+    optNameInput.value = '';
+    if (!jsonStr) return;
+    try {
+        var data = JSON.parse(jsonStr);
+        if (data.option_name) optNameInput.value = data.option_name;
+        if (data.map) {
+            Object.keys(data.map).forEach(function(key) {
+                smapAddRow(target, key, data.map[key].service_id);
+            });
+        }
+    } catch(e) {}
+}
+
+// ── 패키지 서비스 UI ──
+function pkgAddRow(target, data) {
+    data = data || {};
+    var container = document.querySelector('.pkg-entries[data-for="' + target + '"]');
+    var row = document.createElement('div');
+    row.className = 'pkg-row';
+    row.style.cssText = 'border:1px solid var(--gray-100);border-radius:12px;padding:16px;margin-bottom:12px;';
+    row.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+        '<span style="font-weight:600;font-size:13px;">서비스</span>' +
+        '<button type="button" class="toss-btn toss-btn-danger toss-btn-sm pkg-del">삭제</button>' +
+        '</div>' +
+        '<div class="toss-form-group" style="margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">타입</label>' +
+        '<select class="toss-select pkg-type">' +
+        '<option value="default">일반 (팔로워 등)</option>' +
+        '<option value="subscription">구독 (자동좋아요)</option>' +
+        '</select></div>' +
+        '<div class="toss-form-group" style="margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">서비스</label>' +
+        '<select class="toss-select pkg-svc">' + SERVICE_OPTIONS + '</select></div>' +
+        '<div class="pkg-default-fields">' +
+        '<div class="toss-form-group" style="margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">수량 (고정)</label>' +
+        '<input type="number" class="toss-input pkg-qty" value="' + (data.quantity || 0) + '"></div>' +
+        '</div>' +
+        '<div class="pkg-sub-fields" style="display:none;">' +
+        '<div style="display:flex;gap:8px;">' +
+        '<div class="toss-form-group" style="flex:1;margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">좋아요 min</label>' +
+        '<input type="number" class="toss-input pkg-min" value="' + (data.min || 100) + '"></div>' +
+        '<div class="toss-form-group" style="flex:1;margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">좋아요 max</label>' +
+        '<input type="number" class="toss-input pkg-max" value="' + (data.max || 100) + '"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<div class="toss-form-group" style="flex:1;margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">게시물 수</label>' +
+        '<input type="number" class="toss-input pkg-posts" value="' + (data.posts || 0) + '"></div>' +
+        '<div class="toss-form-group" style="flex:1;margin-bottom:8px;">' +
+        '<label class="toss-label" style="font-size:12px;">딜레이 (분)</label>' +
+        '<input type="number" class="toss-input pkg-delay" value="' + (data.delay || 0) + '"></div>' +
+        '</div></div>';
+    container.appendChild(row);
+
+    var typeSelect = row.querySelector('.pkg-type');
+    if (data.type) typeSelect.value = data.type;
+    if (data.service_id) row.querySelector('.pkg-svc').value = data.service_id;
+
+    function togglePkgType() {
+        row.querySelector('.pkg-default-fields').style.display = typeSelect.value === 'subscription' ? 'none' : 'block';
+        row.querySelector('.pkg-sub-fields').style.display = typeSelect.value === 'subscription' ? 'block' : 'none';
+    }
+    togglePkgType();
+    typeSelect.addEventListener('change', togglePkgType);
+    row.querySelector('.pkg-del').addEventListener('click', function() { row.remove(); });
+}
+
+document.querySelectorAll('.pkg-add-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { pkgAddRow(this.dataset.for); });
+});
+
+function buildPackageConfigJSON(target) {
+    var jsonField = document.querySelector('.pkg-json[data-for="' + target + '"]');
+    if (!jsonField) return;
+    var rows = document.querySelectorAll('.pkg-entries[data-for="' + target + '"] .pkg-row');
+    if (rows.length === 0) { jsonField.value = ''; return; }
+    var arr = [];
+    rows.forEach(function(row) {
+        var type = row.querySelector('.pkg-type').value;
+        var sel = row.querySelector('.pkg-svc');
+        var svcId = parseInt(sel.value);
+        var svcName = sel.options[sel.selectedIndex] ? (sel.options[sel.selectedIndex].dataset.name || '') : '';
+        if (!svcId) return;
+        var entry = {type: type, service_id: svcId, service_name: svcName};
+        if (type === 'subscription') {
+            entry.min = parseInt(row.querySelector('.pkg-min').value) || 0;
+            entry.max = parseInt(row.querySelector('.pkg-max').value) || 0;
+            entry.posts = parseInt(row.querySelector('.pkg-posts').value) || 0;
+            entry.delay = parseInt(row.querySelector('.pkg-delay').value) || 0;
+        } else {
+            entry.quantity = parseInt(row.querySelector('.pkg-qty').value) || 0;
+        }
+        arr.push(entry);
+    });
+    jsonField.value = arr.length > 0 ? JSON.stringify(arr) : '';
+}
+
+function loadPackageConfig(target, jsonStr) {
+    var container = document.querySelector('.pkg-entries[data-for="' + target + '"]');
+    container.innerHTML = '';
+    if (!jsonStr) return;
+    try {
+        var arr = JSON.parse(jsonStr);
+        if (Array.isArray(arr)) {
+            arr.forEach(function(item) { pkgAddRow(target, item); });
+        }
+    } catch(e) {}
+}
+
+// ── 수정 모달 데이터 바인딩 ──
+document.querySelectorAll('.edit-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var d = this.dataset;
+        document.getElementById('editMappingForm').action = '/admin/mappings/' + d.id + '/edit';
+
+        var productSelect = document.getElementById('edit_product_select');
+        if (productSelect) {
+            productSelect.value = d.productNo;
+            var noInput = document.querySelector('.cafe24-product-no-hidden[data-for="edit"]');
+            var nameInput = document.querySelector('.cafe24-product-name-hidden[data-for="edit"]');
+            if (noInput) noInput.value = d.productNo;
+            if (nameInput) nameInput.value = d.productName;
+        } else {
+            document.getElementById('edit_product_no').value = d.productNo;
+            document.getElementById('edit_product_name').value = d.productName;
+        }
+
+        document.getElementById('edit_service_id').value = d.serviceId;
+        document.getElementById('edit_order_type').value = d.orderType;
+        document.getElementById('edit_quantity_option_name').value = d.quantityOptionName;
+        document.getElementById('edit_link_source').value = d.linkSource;
+        document.getElementById('edit_option_name').value = d.optionName;
+        document.getElementById('edit_sub_username_option').value = d.subUsernameOption;
+        document.getElementById('edit_sub_likes_option').value = d.subLikesOption;
+        document.getElementById('edit_sub_posts_option').value = d.subPostsOption;
+        document.getElementById('edit_sub_delay').value = d.subDelay;
+        document.getElementById('edit_is_active').value = d.isActive;
+        toggleOrderType(document.getElementById('edit_order_type'));
+
+        // 조건부 매핑 로드
+        loadServiceMap('edit', d.serviceMap);
+        // 패키지 설정 로드
+        loadPackageConfig('edit', d.packageConfig);
+    });
+});
+
+// ── 서비스 새로고침 ──
+document.querySelectorAll('.refresh-services-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        window.location.href = '{{ url_for("admin.mappings") }}?refresh=1';
+    });
+});
+</script>
+{% endblock %}

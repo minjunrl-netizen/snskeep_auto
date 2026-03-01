@@ -1,0 +1,678 @@
+{% extends "base.html" %}
+{% block title %}퀀텀 유튜브 구독자 세팅 — SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">퀀텀 유튜브 구독자 세팅</h1>
+</div>
+
+<div class="toss-alert toss-alert-info" style="margin-bottom:20px;">
+    퀀텀비트 사이트에는 유튜브 채널 이름으로 표기 되니 검색 시 유튜브 채널 이름으로 검색 하시길 바랍니다.
+</div>
+
+<!-- 입력 영역 -->
+<div class="toss-card">
+    <div class="toss-card-header">채널 URL 입력</div>
+    <div style="display:flex; gap:12px;">
+        <div style="flex:1;">
+            <textarea id="channelUrlText" class="toss-input" rows="6"
+                      style="font-family:'Consolas','Monaco',monospace; font-size:14px; resize:vertical;"
+                      placeholder="한 줄에 채널 URL 하나씩 입력&#10;예: https://www.youtube.com/@channelname&#10;    https://www.youtube.com/channel/UC..."></textarea>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px; min-width:150px;">
+            <button class="toss-btn toss-btn-secondary" onclick="fetchOrders()">대기 주문 불러오기</button>
+        </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:16px; padding-top:16px;">
+        <button id="startBtn" class="toss-btn toss-btn-primary" style="padding:14px 32px; font-size:16px;" onclick="startScrape()">스크래핑 시작</button>
+        <span id="statusText" style="font-size:14px; color:var(--gray-500); font-weight:500;">대기 중</span>
+    </div>
+</div>
+
+<!-- 프로그레스 -->
+<div id="progress" style="height:4px; background:var(--gray-100); border-radius:2px; overflow:hidden; display:none; margin-bottom:20px;">
+    <div style="height:100%; background:var(--blue); border-radius:2px; width:40%; animation:indeterminate 1.5s ease-in-out infinite;"></div>
+</div>
+
+<!-- 결과 -->
+<div id="resultCard" class="toss-card" style="display:none;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+        <div id="summaryText" style="font-size:14px; color:var(--gray-600); font-weight:500;"></div>
+        <div style="display:flex; gap:8px;">
+            <button class="toss-btn toss-btn-secondary toss-btn-sm" onclick="copyAll()">전체 복사</button>
+            <button id="superapBtn" class="toss-btn toss-btn-primary toss-btn-sm" onclick="registerSuperap()">superap 캠페인 등록</button>
+        </div>
+    </div>
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>구분</th>
+                    <th>채널 URL</th>
+                    <th>채널명</th>
+                    <th>정답</th>
+                    <th>수량</th>
+                    <th>캠페인</th>
+                </tr>
+            </thead>
+            <tbody id="resultBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 캠페인 설정 -->
+<div class="toss-card" id="campaignSettingsCard">
+    <div style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="toggleSettings()">
+        <div class="toss-card-header" style="margin:0;">캠페인 설정</div>
+        <span id="settingsToggle" style="font-size:18px; color:var(--gray-400); transition:transform .2s;">&#9660;</span>
+    </div>
+    <div id="settingsBody" style="display:none; padding-top:16px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px 20px;">
+            <div style="grid-column:1/-1;">
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">캠페인 제목 템플릿</label>
+                <input type="text" id="s_title_template" class="toss-input" placeholder="{username}은 채널명으로 치환됩니다">
+            </div>
+            <div style="grid-column:1/-1;">
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">detail_type <span style="font-weight:400; color:var(--red, #e53e3e);">(필수 — superap.io 타입)</span></label>
+                <input type="text" id="s_detail_type" class="toss-input" placeholder="예: sns_youtube_subscribe">
+            </div>
+            <div style="grid-column:1/-1;">
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">상품설명 <span style="font-weight:400; color:var(--gray-400);">(비워두면 API 기본값)</span></label>
+                <textarea id="s_description" class="toss-input" rows="3" style="resize:vertical;"></textarea>
+            </div>
+            <div>
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">수량 배수</label>
+                <input type="number" id="s_budget_multiplier" class="toss-input" step="0.1" min="1">
+            </div>
+            <div>
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">캠페인 기간 (일)</label>
+                <input type="number" id="s_duration_days" class="toss-input" min="1">
+            </div>
+            <div>
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">지역</label>
+                <input type="text" id="s_geo" class="toss-input">
+            </div>
+            <div>
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">이벤트 제한</label>
+                <input type="text" id="s_event_limit" class="toss-input">
+            </div>
+            <div style="grid-column:1/-1;">
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
+                    <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin:0;">매체 타겟팅</label>
+                    <span id="mediaSelectAll" style="font-size:12px; color:var(--blue); cursor:pointer; font-weight:500;">전체 선택</span>
+                    <span id="mediaDeselectAll" style="font-size:12px; color:var(--gray-400); cursor:pointer; font-weight:500;">전체 해제</span>
+                </div>
+                <div id="s_media_container" style="display:flex; flex-wrap:wrap; gap:6px 14px; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; background:var(--gray-50);">
+                    <span style="font-size:13px; color:var(--gray-400);">로딩 중...</span>
+                </div>
+            </div>
+            <div style="grid-column:1/-1;">
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">가로 소재 이미지 URL (1200x600) <span style="font-weight:400; color:var(--gray-400);">(비워두면 기본 이미지)</span></label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="text" id="s_img1_url" class="toss-input" style="flex:1;" placeholder="https://webapp.superap.io/res/..." oninput="updateImagePreview('s_img1_url','s_img1_preview')">
+                    <img id="s_img1_preview" src="" style="height:40px; border-radius:4px; border:1px solid var(--gray-200); display:none;">
+                </div>
+            </div>
+            <div style="grid-column:1/-1;">
+                <label style="font-size:13px; font-weight:600; color:var(--gray-600); margin-bottom:4px; display:block;">세로 소재 이미지 URL (720x780) <span style="font-weight:400; color:var(--gray-400);">(비워두면 기본 이미지)</span></label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="text" id="s_img2_url" class="toss-input" style="flex:1;" placeholder="https://webapp.superap.io/res/..." oninput="updateImagePreview('s_img2_url','s_img2_preview')">
+                    <img id="s_img2_preview" src="" style="height:40px; border-radius:4px; border:1px solid var(--gray-200); display:none;">
+                </div>
+            </div>
+        </div>
+        <div style="padding-top:16px; text-align:right;">
+            <button class="toss-btn toss-btn-primary toss-btn-sm" onclick="saveCampaignSettings()">설정 저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- 실패 채널 (스크래핑 실패 / 존재하지 않는 채널) -->
+<div id="failedCard" class="toss-card" style="display:none;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+        <div id="failedSummary" style="font-size:14px; color:var(--red, #e53e3e); font-weight:600;"></div>
+        <button id="cancelFailedBtn" class="toss-btn toss-btn-sm" style="background:var(--red, #e53e3e); color:#fff;" onclick="cancelFailedOrders()">실패 주문 일괄 취소</button>
+    </div>
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>채널 URL</th>
+                    <th>주문 ID</th>
+                    <th>수량</th>
+                    <th>사유</th>
+                    <th>상태</th>
+                </tr>
+            </thead>
+            <tbody id="failedBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- superap 결과 -->
+<div id="superapResultCard" class="toss-card" style="display:none;">
+    <div class="toss-card-header">superap.io 캠페인 등록 결과</div>
+    <div id="superapSummary" style="font-size:14px; color:var(--gray-600); font-weight:500; margin-bottom:12px;"></div>
+    <div class="toss-table-wrap">
+        <table class="toss-table">
+            <thead>
+                <tr>
+                    <th>구분</th>
+                    <th>채널 URL</th>
+                    <th>결과</th>
+                    <th>메시지</th>
+                </tr>
+            </thead>
+            <tbody id="superapResultBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 토스트 -->
+<div id="toast" style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--gray-900); color:#fff; padding:12px 24px; border-radius:8px; font-size:14px; font-weight:500; opacity:0; transition:all .3s ease; z-index:1000; pointer-events:none;"></div>
+
+<style>
+@keyframes indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+.row-new      { background: var(--green-light) !important; }
+.row-new:hover { background: #d1f4dd !important; }
+.row-extend      { background: var(--orange-light) !important; }
+.row-extend:hover { background: #fff0cc !important; }
+.toss-table tbody td { cursor: pointer; transition: background 0.1s; }
+.toss-table tbody td.copied { background: var(--blue-light) !important; transition: background 0s; }
+.superap-ok { color: var(--green); font-weight: 600; }
+.superap-fail { color: var(--red, #e53e3e); font-weight: 600; }
+#failedCard .toss-table tbody tr { background: #fff5f5; }
+#failedCard .toss-table tbody tr:hover { background: #ffe0e0; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let quantityMap = {};
+let orderIdMap = {};  // channel_url → order_id
+
+function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.opacity = '1';
+    el.style.transform = 'translateX(-50%) translateY(0)';
+    setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateX(-50%) translateY(80px)';
+    }, 2000);
+}
+
+function setStatus(msg) {
+    document.getElementById('statusText').textContent = msg;
+}
+
+function setLoading(on) {
+    document.getElementById('progress').style.display = on ? 'block' : 'none';
+    document.getElementById('startBtn').disabled = on;
+    const superapBtn = document.getElementById('superapBtn');
+    if (superapBtn) superapBtn.disabled = on;
+}
+
+function parseChannelUrls() {
+    const raw = document.getElementById('channelUrlText').value.trim();
+    if (!raw) return [];
+    const urls = [];
+    for (const line of raw.split('\n')) {
+        const url = line.trim();
+        if (url) urls.push(url);
+    }
+    return urls;
+}
+
+function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str || '';
+    return d.innerHTML;
+}
+
+function truncateUrl(url, maxLen) {
+    if (!url) return '';
+    if (url.length <= maxLen) return url;
+    return url.substring(0, maxLen) + '...';
+}
+
+// -- 대기 주문 불러오기 --
+
+async function fetchOrders() {
+    setLoading(true);
+    setStatus('대기 주문 불러오는 중...');
+    try {
+        const resp = await fetch('{{ url_for("admin.api_youtube_fetch_orders") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await resp.json();
+        if (!data.ok) { showToast(data.error || '실패'); setStatus('오류 발생'); return; }
+        if (!data.orders.length) { setStatus('대기 중인 주문이 없습니다.'); return; }
+
+        quantityMap = {};
+        orderIdMap = {};
+        const urls = [];
+        for (const o of data.orders) {
+            quantityMap[o.channel_url] = o['수량'];
+            orderIdMap[o.channel_url] = o.order_id;
+            urls.push(o.channel_url);
+        }
+        document.getElementById('channelUrlText').value = urls.join('\n');
+        setStatus(`대기 주문 ${data.orders.length}건 불러옴 — '스크래핑 시작'을 눌러주세요`);
+    } catch (e) {
+        showToast('네트워크 오류: ' + e.message);
+        setStatus('오류 발생');
+    } finally {
+        setLoading(false);
+    }
+}
+
+// -- 스크래핑 시작 --
+
+async function startScrape() {
+    const channelUrls = parseChannelUrls();
+    if (!channelUrls.length) { showToast('스크래핑할 채널 URL을 입력하세요.'); return; }
+
+    setLoading(true);
+    setStatus(`${channelUrls.length}개 채널 스크래핑 중...`);
+    document.getElementById('resultCard').style.display = 'none';
+    document.getElementById('failedCard').style.display = 'none';
+    document.getElementById('superapResultCard').style.display = 'none';
+
+    try {
+        const resp = await fetch('{{ url_for("admin.api_youtube_scrape_channels") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                channel_urls: channelUrls,
+                quantity_map: quantityMap,
+                order_id_map: orderIdMap,
+            })
+        });
+        const data = await resp.json();
+        if (!data.ok) { showToast(data.error || '스크래핑 실패'); setStatus('오류 발생'); return; }
+        renderResults(data.results);
+        renderFailed(data.failed || []);
+
+        const failedCount = (data.failed || []).length;
+        let statusMsg = `완료 — 성공 ${data.results.length}건`;
+        if (failedCount > 0) statusMsg += `, 실패 ${failedCount}건`;
+        setStatus(statusMsg);
+    } catch (e) {
+        showToast('네트워크 오류: ' + e.message);
+        setStatus('오류 발생');
+    } finally {
+        setLoading(false);
+    }
+}
+
+// -- 결과 렌더링 --
+
+function renderResults(results) {
+    const card = document.getElementById('resultCard');
+    const body = document.getElementById('resultBody');
+    body.innerHTML = '';
+    if (!results.length) { card.style.display = 'none'; return; }
+
+    let newCount = 0, extCount = 0;
+    for (const r of results) {
+        const tr = document.createElement('tr');
+        if (r['구분'] === '신규') { tr.className = 'row-new'; newCount++; }
+        else { tr.className = 'row-extend'; extCount++; }
+
+        const badge = r['구분'] === '신규'
+            ? '<span class="toss-badge toss-badge-success">신규</span>'
+            : '<span class="toss-badge toss-badge-warning">캠페인 연장</span>';
+
+        tr.innerHTML = `
+            <td>${badge}</td>
+            <td title="${esc(r.channel_url)}" style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(truncateUrl(r.channel_url, 50))}</td>
+            <td>${esc(r.channel_name)}</td>
+            <td>${esc(r['정답'])}</td>
+            <td>${esc(r['수량'] || '')}</td>
+            <td><span class="toss-badge toss-badge-muted">대기</span></td>`;
+
+        tr.querySelectorAll('td').forEach(td => {
+            td.addEventListener('click', () => {
+                const text = td.getAttribute('title') || td.textContent.trim();
+                navigator.clipboard.writeText(text);
+                td.classList.add('copied');
+                setTimeout(() => td.classList.remove('copied'), 300);
+                showToast('복사됨: ' + text);
+            });
+        });
+        body.appendChild(tr);
+    }
+
+    document.getElementById('summaryText').innerHTML =
+        `총 <strong>${results.length}</strong>건 &nbsp;|&nbsp; 신규 <strong>${newCount}</strong>건 &nbsp;|&nbsp; 캠페인 연장 <strong>${extCount}</strong>건`;
+    card.style.display = 'block';
+    card._results = results;
+}
+
+// -- superap.io 캠페인 등록 --
+
+async function registerSuperap() {
+    const card = document.getElementById('resultCard');
+    const results = card._results;
+    if (!results || !results.length) {
+        showToast('먼저 채널 스크래핑을 실행하세요.');
+        return;
+    }
+
+    if (!confirm(`${results.length}건의 캠페인을 superap.io에 등록하시겠습니까?`)) return;
+
+    setLoading(true);
+    setStatus(`superap.io에 ${results.length}건 캠페인 등록 중...`);
+
+    const orders = results.map(r => ({
+        username: r.channel_url,
+        quantity: parseInt(r['수량']) || 0,
+        link: r.channel_url,
+        answer: r['정답'] || '',
+        channel_name: r.channel_name || '',
+    }));
+
+    try {
+        const resp = await fetch('{{ url_for("admin.api_youtube_superap_register") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({orders})
+        });
+        const data = await resp.json();
+        if (!data.ok) { showToast(data.error || '등록 실패'); setStatus('오류 발생'); return; }
+
+        renderSuperapResults(data.results);
+        setStatus(`superap 등록 완료 — 성공 ${data.success_count}건, 실패 ${data.fail_count}건`);
+
+        // 결과 테이블의 캠페인 컬럼 업데이트
+        updateCampaignStatus(data.results);
+
+    } catch (e) {
+        showToast('네트워크 오류: ' + e.message);
+        setStatus('오류 발생');
+    } finally {
+        setLoading(false);
+    }
+}
+
+function renderSuperapResults(results) {
+    const card = document.getElementById('superapResultCard');
+    const body = document.getElementById('superapResultBody');
+    body.innerHTML = '';
+
+    let okCount = 0, failCount = 0;
+    for (const r of results) {
+        const tr = document.createElement('tr');
+        if (r.ok) { okCount++; tr.className = 'row-new'; }
+        else { failCount++; }
+
+        const badge = r['구분'] === '신규'
+            ? '<span class="toss-badge toss-badge-success">신규</span>'
+            : '<span class="toss-badge toss-badge-warning">연장</span>';
+        const statusBadge = r.ok
+            ? '<span class="superap-ok">성공</span>'
+            : '<span class="superap-fail">실패</span>';
+
+        tr.innerHTML = `
+            <td>${badge}</td>
+            <td title="${esc(r.username)}" style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(truncateUrl(r.username, 50))}</td>
+            <td>${statusBadge}</td>
+            <td>${esc(r.message)}</td>`;
+        body.appendChild(tr);
+    }
+
+    document.getElementById('superapSummary').innerHTML =
+        `성공 <strong>${okCount}</strong>건 &nbsp;|&nbsp; 실패 <strong>${failCount}</strong>건`;
+    card.style.display = 'block';
+}
+
+function updateCampaignStatus(superapResults) {
+    const rows = document.getElementById('resultBody').querySelectorAll('tr');
+    const statusMap = {};
+    for (const r of superapResults) {
+        statusMap[r.username] = r.ok;
+    }
+
+    rows.forEach(row => {
+        const urlTd = row.querySelectorAll('td')[1];
+        const campaignTd = row.querySelectorAll('td')[5];
+        if (!urlTd || !campaignTd) return;
+
+        const channelUrl = urlTd.getAttribute('title') || urlTd.textContent.trim();
+        if (channelUrl in statusMap) {
+            campaignTd.innerHTML = statusMap[channelUrl]
+                ? '<span class="toss-badge toss-badge-success">등록완료</span>'
+                : '<span class="toss-badge toss-badge-danger">등록실패</span>';
+        }
+    });
+}
+
+// -- 실패 채널 렌더링 & 주문 취소 --
+
+function renderFailed(failed) {
+    const card = document.getElementById('failedCard');
+    const body = document.getElementById('failedBody');
+    body.innerHTML = '';
+
+    if (!failed || !failed.length) {
+        card.style.display = 'none';
+        return;
+    }
+
+    for (const f of failed) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td title="${esc(f.channel_url)}" style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(truncateUrl(f.channel_url, 50))}</td>
+            <td>${f.order_id || '-'}</td>
+            <td>${esc(f['수량'] || '')}</td>
+            <td style="font-size:13px; color:var(--gray-500);">${esc(f.reason)}</td>
+            <td><span class="toss-badge toss-badge-danger">실패</span></td>`;
+        body.appendChild(tr);
+    }
+
+    const cancelableCount = failed.filter(f => f.order_id).length;
+    document.getElementById('failedSummary').textContent =
+        `스크래핑 실패 ${failed.length}건` + (cancelableCount > 0 ? ` (취소 가능 ${cancelableCount}건)` : '');
+    document.getElementById('cancelFailedBtn').style.display = cancelableCount > 0 ? '' : 'none';
+    card.style.display = 'block';
+    card._failed = failed;
+}
+
+async function cancelFailedOrders() {
+    const card = document.getElementById('failedCard');
+    const failed = card._failed;
+    if (!failed || !failed.length) return;
+
+    const cancelable = failed.filter(f => f.order_id);
+    if (!cancelable.length) {
+        showToast('취소할 주문이 없습니다.');
+        return;
+    }
+
+    if (!confirm(`${cancelable.length}건의 주문을 취소하시겠습니까?\n(존재하지 않는 채널의 주문)`)) return;
+
+    setLoading(true);
+    setStatus(`${cancelable.length}건 주문 취소 중...`);
+
+    try {
+        const orderIds = cancelable.map(f => f.order_id);
+        const resp = await fetch('{{ url_for("admin.api_youtube_cancel_orders") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({order_ids: orderIds})
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            showToast(`${data.cancelled}건 주문 취소 완료`);
+            // 취소된 행의 상태를 업데이트
+            const rows = document.getElementById('failedBody').querySelectorAll('tr');
+            const canceledSet = new Set(orderIds.map(String));
+            rows.forEach(row => {
+                const idTd = row.querySelectorAll('td')[1];
+                const statusTd = row.querySelectorAll('td')[4];
+                if (idTd && canceledSet.has(idTd.textContent.trim())) {
+                    statusTd.innerHTML = '<span class="toss-badge toss-badge-muted">취소됨</span>';
+                }
+            });
+            document.getElementById('cancelFailedBtn').style.display = 'none';
+            setStatus(`주문 취소 완료 (${data.cancelled}건)`);
+        } else {
+            showToast('취소 실패: ' + (data.error || '알 수 없는 오류'));
+            setStatus('취소 실패');
+        }
+    } catch (e) {
+        showToast('네트워크 오류: ' + e.message);
+        setStatus('오류 발생');
+    } finally {
+        setLoading(false);
+    }
+}
+
+// -- 전체 복사 --
+
+function copyAll() {
+    const card = document.getElementById('resultCard');
+    const results = card._results;
+    if (!results || !results.length) return;
+    const lines = ['구분\t채널URL\t채널명\t정답\t수량'];
+    for (const r of results) {
+        lines.push([r['구분'], r.channel_url, r.channel_name, r['정답'], r['수량'] || ''].join('\t'));
+    }
+    navigator.clipboard.writeText(lines.join('\n'));
+    showToast(`전체 ${results.length}건 클립보드에 복사됨`);
+}
+
+// -- 캠페인 설정 --
+
+function toggleSettings() {
+    const body = document.getElementById('settingsBody');
+    const toggle = document.getElementById('settingsToggle');
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        toggle.style.transform = 'rotate(180deg)';
+    } else {
+        body.style.display = 'none';
+        toggle.style.transform = 'rotate(0deg)';
+    }
+}
+
+function updateImagePreview(inputId, previewId) {
+    const url = document.getElementById(inputId).value.trim();
+    const img = document.getElementById(previewId);
+    if (url) {
+        img.src = url;
+        img.style.display = 'block';
+        img.onerror = () => { img.style.display = 'none'; };
+    } else {
+        img.style.display = 'none';
+    }
+}
+
+let _allPublishers = [];
+
+async function loadPublishers(savedIds) {
+    const container = document.getElementById('s_media_container');
+    try {
+        const resp = await fetch('{{ url_for("admin.api_youtube_superap_publishers") }}');
+        const data = await resp.json();
+        if (!data.ok || !data.publishers.length) {
+            container.innerHTML = '<span style="font-size:13px; color:var(--gray-400);">매체 목록 없음</span>';
+            return;
+        }
+        _allPublishers = data.publishers;
+        const savedSet = new Set((savedIds || []).map(String));
+        const selectAll = savedSet.size === 0;
+
+        container.innerHTML = _allPublishers.map(p => {
+            const checked = selectAll || savedSet.has(String(p.value)) ? 'checked' : '';
+            return `<label style="font-size:13px; display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;">
+                <input type="checkbox" class="media-cb" value="${p.value}" ${checked}> ${esc(p.name)}
+            </label>`;
+        }).join('');
+    } catch (e) {
+        container.innerHTML = '<span style="font-size:13px; color:var(--red, #e53e3e);">로드 실패</span>';
+    }
+}
+
+function getSelectedMediaIds() {
+    return Array.from(document.querySelectorAll('.media-cb:checked')).map(cb => Number(cb.value));
+}
+
+async function loadCampaignSettings() {
+    try {
+        const resp = await fetch('{{ url_for("admin.api_youtube_get_campaign_settings") }}');
+        const data = await resp.json();
+        document.getElementById('s_title_template').value = data.title_template || '';
+        document.getElementById('s_detail_type').value = data.detail_type || '';
+        document.getElementById('s_description').value = data.description || '';
+        document.getElementById('s_budget_multiplier').value = data.budget_multiplier ?? 1.2;
+        document.getElementById('s_duration_days').value = data.duration_days ?? 30;
+        document.getElementById('s_geo').value = data.geo || 'kr';
+        document.getElementById('s_event_limit').value = data.event_limit || '1';
+        document.getElementById('s_img1_url').value = data.img1_url || '';
+        document.getElementById('s_img2_url').value = data.img2_url || '';
+        updateImagePreview('s_img1_url', 's_img1_preview');
+        updateImagePreview('s_img2_url', 's_img2_preview');
+        await loadPublishers(data.target_media_ids || []);
+    } catch (e) {
+        console.error('캠페인 설정 로드 실패:', e);
+    }
+}
+
+async function saveCampaignSettings() {
+    const detailType = document.getElementById('s_detail_type').value.trim();
+    if (!detailType) {
+        showToast('detail_type은 필수입니다. superap.io에서 확인 후 입력해주세요.');
+        return;
+    }
+
+    const settings = {
+        title_template: document.getElementById('s_title_template').value,
+        detail_type: detailType,
+        description: document.getElementById('s_description').value,
+        budget_multiplier: parseFloat(document.getElementById('s_budget_multiplier').value) || 1.2,
+        duration_days: parseInt(document.getElementById('s_duration_days').value) || 30,
+        geo: document.getElementById('s_geo').value || 'kr',
+        event_limit: document.getElementById('s_event_limit').value || '1',
+        img1_url: document.getElementById('s_img1_url').value.trim(),
+        img2_url: document.getElementById('s_img2_url').value.trim(),
+        target_media_ids: getSelectedMediaIds(),
+    };
+
+    try {
+        const resp = await fetch('{{ url_for("admin.api_youtube_save_campaign_settings") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(settings)
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            showToast('캠페인 설정이 저장되었습니다.');
+            updateImagePreview('s_img1_url', 's_img1_preview');
+            updateImagePreview('s_img2_url', 's_img2_preview');
+        } else {
+            showToast('저장 실패: ' + (data.error || '알 수 없는 오류'));
+        }
+    } catch (e) {
+        showToast('네트워크 오류: ' + e.message);
+    }
+}
+
+// 매체 전체 선택/해제
+document.getElementById('mediaSelectAll').addEventListener('click', () => {
+    document.querySelectorAll('.media-cb').forEach(cb => cb.checked = true);
+});
+document.getElementById('mediaDeselectAll').addEventListener('click', () => {
+    document.querySelectorAll('.media-cb').forEach(cb => cb.checked = false);
+});
+
+// 페이지 로드 시 설정 불러오기
+loadCampaignSettings();
+</script>
+{% endblock %}
