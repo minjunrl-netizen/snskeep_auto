@@ -11,6 +11,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime
 
 import requests
@@ -428,6 +429,7 @@ def check_campaign_completion_job():
         logger.info("[캠페인 완료 체크] 완료 처리할 주문 없음")
 
 
+<<<<<<< HEAD
 MAX_ANSWER_RETRIES = 3  # 정답 바꿔서 재시도 횟수
 
 
@@ -514,6 +516,10 @@ def _retry_or_refund(partial_orders: list[dict], client: SuperapClient, platform
     if final_refund_orders:
         _process_partial_refund(final_refund_orders, platform=platform)
 
+# 부분이행 알림 쿨다운 (order_id → 마지막 알림 시각)
+_partial_refund_notified: dict[str, float] = {}
+_PARTIAL_REFUND_COOLDOWN = 3600  # 1시간
+
 
 def _process_partial_refund(partial_orders: list[dict], platform: str = "instagram"):
     """캠페인 중단(TotalOff/Deactive) 부분이행 → 알림만 전송 (수동 환불 처리)."""
@@ -539,6 +545,13 @@ def _process_partial_refund(partial_orders: list[dict], platform: str = "instagr
             db.session.rollback()
             logger.exception("%s ProcessedOrder 업데이트 실패: IM-%s", label, po["order_id"])
 
+        # 알림 1시간 쿨다운
+        now = time.time()
+        last_notified = _partial_refund_notified.get(po["order_id"], 0)
+        if now - last_notified < _PARTIAL_REFUND_COOLDOWN:
+            logger.debug("%s 알림 쿨다운 중 (IM-%s), 건너뜀", label, po["order_id"])
+            continue
+
         try:
             notify_partial_refund(
                 order_id=po["order_id"],
@@ -547,6 +560,7 @@ def _process_partial_refund(partial_orders: list[dict], platform: str = "instagr
                 action_count=po["action_count"],
                 remains=po["remains"],
             )
+            _partial_refund_notified[po["order_id"]] = now
         except Exception:
             logger.exception("%s 텔레그램 알림 실패: IM-%s", label, po["order_id"])
 

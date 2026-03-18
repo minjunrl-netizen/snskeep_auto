@@ -140,3 +140,75 @@ def notify_partial_refund(order_id, username, quantity, action_count, remains):
         f"미수행: {remains}\n"
         f"→ 수동 환불 처리 필요"
     )
+
+
+# ── 세션/인증 관련 알림 ──
+
+def notify_session_expired(service_name, error=""):
+    """외부 서비스 세션 만료 알림"""
+    _send(
+        f"<b>[세션 만료]</b>\n"
+        f"서비스: {service_name}\n"
+        f"에러: {error}\n"
+        f"자동 재로그인을 시도합니다."
+    )
+
+
+def notify_session_recovered(service_name):
+    """외부 서비스 세션 복구 성공 알림"""
+    _send(
+        f"<b>[세션 복구 완료]</b>\n"
+        f"서비스: {service_name}\n"
+        f"정상 복구되었습니다."
+    )
+
+
+def notify_session_recovery_failed(service_name, error=""):
+    """외부 서비스 세션 복구 실패 알림"""
+    _send(
+        f"<b>[세션 복구 실패]</b>\n"
+        f"서비스: {service_name}\n"
+        f"에러: {error}\n"
+        f"수동 확인이 필요합니다."
+    )
+
+
+def notify_token_expiring(service_name, days_left):
+    """토큰 만료 임박 경고"""
+    _send(
+        f"<b>[토큰 만료 임박]</b>\n"
+        f"서비스: {service_name}\n"
+        f"만료까지: {days_left}일\n"
+        f"관리자 페이지에서 재인증해주세요."
+    )
+
+
+def notify_token_expired(service_name):
+    """토큰 만료 긴급 알림"""
+    _send(
+        f"<b>[토큰 만료]</b>\n"
+        f"서비스: {service_name}\n"
+        f"토큰이 만료되었습니다. 즉시 재인증이 필요합니다!\n"
+        f"관리자 페이지 → 설정에서 OAuth 재인증해주세요."
+    )
+
+
+def notify_scheduler_failure(job_name, error, consecutive_count=1):
+    """스케줄러 연속 실패 알림"""
+    level = "경고" if consecutive_count < 3 else "긴급"
+    _send(
+        f"<b>[스케줄러 {level}]</b>\n"
+        f"작업: {job_name}\n"
+        f"연속 실패: {consecutive_count}회\n"
+        f"에러: {error}"
+    )
+
+
+def notify_health_check_fail(service_name, error=""):
+    """헬스체크 실패 알림"""
+    _send(
+        f"<b>[헬스체크 실패]</b>\n"
+        f"서비스: {service_name}\n"
+        f"에러: {error}\n"
+        f"자동 복구를 시도합니다."
+    )
