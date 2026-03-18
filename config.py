@@ -45,3 +45,12 @@ TELEGRAM_REFUND_CHAT_ID = os.getenv("TELEGRAM_REFUND_CHAT_ID", "")
 
 # 폴링
 POLLING_INTERVAL = int(os.getenv("POLLING_INTERVAL", "90"))
+
+# 팝빌 (Popbill) 계좌조회
+POPBILL_LINK_ID = os.getenv("POPBILL_LINK_ID", "")
+POPBILL_SECRET_KEY = os.getenv("POPBILL_SECRET_KEY", "")
+POPBILL_CORP_NUM = os.getenv("POPBILL_CORP_NUM", "")  # 사업자번호 (하이픈 제외 10자리)
+POPBILL_BANK_CODE = os.getenv("POPBILL_BANK_CODE", "")  # 은행코드
+POPBILL_ACCOUNT_NUMBER = os.getenv("POPBILL_ACCOUNT_NUMBER", "")  # 계좌번호
+POPBILL_IS_TEST = os.getenv("POPBILL_IS_TEST", "true").lower() == "true"
+

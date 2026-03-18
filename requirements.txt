@@ -6,3 +6,4 @@ apscheduler==3.10.4
 gunicorn==23.0.0
 flask-login==0.6.3
 apify-client
+popbill==1.63.0

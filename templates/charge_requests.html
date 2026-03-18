@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block title %}충전 요청 - SNS킵{% endblock %}
+
+{% block content %}
+<style>
+/* 엑셀 스타일 테이블 */
+.xl-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: 'Pretendard', -apple-system, sans-serif;
+}
+.xl-table thead th {
+    background: #2b3544;
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 10px 12px;
+    text-align: center;
+    border: 1px solid #1e2a38;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.xl-table tbody td {
+    padding: 9px 12px;
+    border: 1px solid #d5dbe2;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.xl-table tbody tr:nth-child(even) { background: #f7f8fa; }
+.xl-table tbody tr:nth-child(odd) { background: #fff; }
+.xl-table tbody tr:hover { background: #edf2f7; }
+
+/* 셀 정렬 */
+.xl-left { text-align: left; }
+.xl-right { text-align: right; }
+
+/* 상태 라벨 */
+.xl-label {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.xl-pending { background: #fff3cd; color: #856404; }
+.xl-charged { background: #d4edda; color: #155724; }
+.xl-failed { background: #f8d7da; color: #721c24; }
+.xl-expired { background: #e2e3e5; color: #6c757d; }
+.xl-matched { background: #cce5ff; color: #004085; }
+
+.xl-tax-invoice { background: #cce5ff; color: #004085; }
+.xl-cash-receipt { background: #fff3cd; color: #856404; }
+.xl-issued { background: #d4edda; color: #155724; }
+.xl-issue-fail { background: #f8d7da; color: #721c24; }
+.xl-not-issued { background: #fff3cd; color: #856404; }
+
+/* 버튼 */
+.xl-btn {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid;
+    cursor: pointer;
+    text-decoration: none;
+    font-family: inherit;
+    line-height: 1.4;
+}
+.xl-btn-blue { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+.xl-btn-blue:hover { background: #0b5ed7; }
+.xl-btn-orange { background: #fd7e14; color: #fff; border-color: #fd7e14; }
+.xl-btn-orange:hover { background: #e06b0a; }
+.xl-btn-red { background: #fff; color: #dc3545; border-color: #dc3545; }
+.xl-btn-red:hover { background: #dc3545; color: #fff; }
+.xl-btn-gray { background: #fff; color: #6c757d; border-color: #adb5bd; }
+.xl-btn-gray:hover { background: #6c757d; color: #fff; }
+
+/* 금액 강조 */
+.xl-amount { font-weight: 700; color: #0d6efd; }
+.xl-amount-sub { color: #495057; }
+
+/* 에러 메시지 */
+.xl-error { font-size: 10px; color: #dc3545; margin-top: 3px; }
+
+/* 퀵 날짜 버튼 */
+.ds-quick-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid #4a5568;
+    background: transparent;
+    color: #cbd5e0;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+.ds-quick-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+.ds-quick-btn:active { background: #0d6efd; border-color: #0d6efd; color: #fff; }
+
+/* 테이블 래퍼 */
+.xl-wrap {
+    overflow-x: auto;
+    border: 2px solid #2b3544;
+    border-radius: 6px;
+}
+</style>
+
+<div class="toss-page-header">
+    <h1 class="toss-page-title">충전 요청 현황</h1>
+</div>
+
+{# ── 매출 대시보드 ── #}
+<div style="background:#2b3544;border-radius:12px;padding:24px;margin-bottom:20px;color:#fff;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <div style="font-size:16px;font-weight:700;">매출 현황</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <div style="display:flex;gap:4px;">
+                <button type="button" class="ds-quick-btn" onclick="setDateRange(0)">오늘</button>
+                <button type="button" class="ds-quick-btn" onclick="setDateRange(-1)">어제</button>
+                <button type="button" class="ds-quick-btn" onclick="setDateRange(-7)">7일</button>
+                <button type="button" class="ds-quick-btn" onclick="setDateRange(-30)">30일</button>
+            </div>
+            <form method="GET" id="dashForm" style="display:flex;gap:6px;align-items:center;">
+                <input type="hidden" name="status" value="{{ filter_status }}">
+                <input type="date" name="start_date" id="ds_start" value="{{ start_date or '' }}"
+                       style="padding:5px 8px;border-radius:6px;border:1px solid #4a5568;background:#1a2332;color:#fff;font-size:12px;width:130px;">
+                <span style="color:#8b95a1;">~</span>
+                <input type="date" name="end_date" id="ds_end" value="{{ end_date or '' }}"
+                       style="padding:5px 8px;border-radius:6px;border:1px solid #4a5568;background:#1a2332;color:#fff;font-size:12px;width:130px;">
+                <button type="submit" style="padding:5px 12px;border-radius:6px;border:none;background:#0d6efd;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">조회</button>
+            </form>
+        </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;">
+        <div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:16px;">
+            <div style="font-size:12px;color:#8b95a1;margin-bottom:6px;">총 매출</div>
+            <div style="font-size:24px;font-weight:800;">{{ "{:,}".format(total_sales) }}<span style="font-size:14px;font-weight:500;">원</span></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:16px;">
+            <div style="font-size:12px;color:#ffc107;margin-bottom:6px;">현금매출 (미발행)</div>
+            <div style="font-size:24px;font-weight:800;color:#ffc107;">{{ "{:,}".format(cash_sales) }}<span style="font-size:14px;font-weight:500;">원</span></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:16px;">
+            <div style="font-size:12px;color:#60a5fa;margin-bottom:6px;">세금계산서 발행</div>
+            <div style="font-size:24px;font-weight:800;color:#60a5fa;">{{ "{:,}".format(tax_invoice_sales) }}<span style="font-size:14px;font-weight:500;">원</span></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:16px;">
+            <div style="font-size:12px;color:#34d399;margin-bottom:6px;">현금영수증 발행</div>
+            <div style="font-size:24px;font-weight:800;color:#34d399;">{{ "{:,}".format(cash_receipt_sales) }}<span style="font-size:14px;font-weight:500;">원</span></div>
+        </div>
+    </div>
+</div>
+
+{# ── 처리 통계 ── #}
+<div style="display:flex;gap:16px;margin-bottom:20px;">
+    <div class="toss-card" style="flex:1;padding:16px;">
+        <div style="color:var(--gray-500);font-size:12px;">대기 중</div>
+        <div style="font-size:22px;font-weight:700;color:#fd7e14;">{{ pending_count }}건</div>
+    </div>
+    <div class="toss-card" style="flex:1;padding:16px;">
+        <div style="color:var(--gray-500);font-size:12px;">충전 완료</div>
+        <div style="font-size:22px;font-weight:700;color:#0d6efd;">{{ charged_count }}건</div>
+    </div>
+    <div class="toss-card" style="flex:1;padding:16px;">
+        <div style="color:var(--gray-500);font-size:12px;">실패</div>
+        <div style="font-size:22px;font-weight:700;color:#dc3545;">{{ failed_count }}건</div>
+    </div>
+</div>
+
+{# ── 필터 ── #}
+<form method="GET" class="toss-filter-bar">
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">상태</span>
+        <select name="status" class="toss-select">
+            <option value="">전체</option>
+            <option value="pending" {% if filter_status == 'pending' %}selected{% endif %}>대기</option>
+            <option value="charged" {% if filter_status == 'charged' %}selected{% endif %}>충전완료</option>
+            <option value="failed" {% if filter_status == 'failed' %}selected{% endif %}>실패</option>
+            <option value="expired" {% if filter_status == 'expired' %}selected{% endif %}>만료</option>
+        </select>
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">입금자명</span>
+        <input type="text" name="search_name" class="toss-input" value="{{ search_name or '' }}" placeholder="입금자명 검색" style="width:140px;">
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">시작일</span>
+        <input type="date" name="start_date" class="toss-input" value="{{ start_date or '' }}">
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">종료일</span>
+        <input type="date" name="end_date" class="toss-input" value="{{ end_date or '' }}">
+    </div>
+    <div class="toss-filter-group">
+        <span class="toss-filter-label">&nbsp;</span>
+        <button type="submit" class="toss-btn toss-btn-primary toss-btn-sm">검색</button>
+    </div>
+</form>
+
+{# ── 테이블 ── #}
+{% if requests %}
+<div class="xl-wrap">
+    <table class="xl-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">#</th>
+                <th>입금시간</th>
+                <th>요청일시</th>
+                <th>유저ID</th>
+                <th>입금자명</th>
+                <th>입금액</th>
+                <th>충전액</th>
+                <th>충전상태</th>
+                <th>계산서유형</th>
+                <th>발행상태</th>
+                <th>충전일시</th>
+                <th style="min-width:160px;">작업</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in requests %}
+            <tr>
+                <td>{{ r.id }}</td>
+                <td>{% if deposit_times.get(r.id) %}{{ deposit_times[r.id].strftime('%m/%d %H:%M:%S') }}{% else %}-{% endif %}</td>
+                <td>{{ r._kst_created.strftime('%m/%d %H:%M:%S') if r._kst_created else '-' }}</td>
+                <td class="xl-left" style="font-weight:600;">{{ r.username }}</td>
+                <td>{{ r.depositor_name }}</td>
+                <td class="xl-right xl-amount-sub">{{ "{:,}".format(r.amount) }}</td>
+                <td class="xl-right xl-amount">{{ "{:,}".format(r.charge_amount) }}</td>
+                <td>
+                    {% if r.status == 'pending' %}
+                    <span class="xl-label xl-pending">대기</span>
+                    {% elif r.status == 'charged' %}
+                    <span class="xl-label xl-charged">충전완료</span>
+                    {% elif r.status == 'failed' %}
+                    <span class="xl-label xl-failed">실패</span>
+                    {% elif r.status == 'expired' %}
+                    <span class="xl-label xl-expired">만료</span>
+                    {% elif r.status == 'matched' %}
+                    <span class="xl-label xl-matched">매칭됨</span>
+                    {% else %}
+                    <span class="xl-label xl-expired">{{ r.status }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.tax_type == 1 %}
+                    <span class="xl-label xl-tax-invoice">세금계산서</span>
+                    {% elif r.tax_type == 2 %}
+                    <span class="xl-label xl-cash-receipt">현금영수증</span>
+                    {% else %}
+                    <span style="color:#adb5bd;">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.tax_type == 0 %}
+                    <span style="color:#adb5bd;">-</span>
+                    {% elif r.tax_issued %}
+                    <span class="xl-label xl-issued">발행완료</span>
+                    {% elif r.tax_error %}
+                    <span class="xl-label xl-issue-fail" title="{{ r.tax_error }}">실패</span>
+                    {% elif r.status == 'charged' %}
+                    <span class="xl-label xl-not-issued">미발행</span>
+                    {% else %}
+                    <span style="color:#adb5bd;">대기</span>
+                    {% endif %}
+                </td>
+                <td>{{ r._kst_charged.strftime('%m/%d %H:%M:%S') if r._kst_charged else '-' }}</td>
+                <td>
+                    {# 충전 작업 #}
+                    {% if r.status in ('pending', 'failed') %}
+                    <form method="POST" action="{{ url_for('admin.manual_charge', req_id=r.id) }}" style="display:inline;">
+                        <button type="submit" class="xl-btn xl-btn-blue"
+                                onclick="return confirm('{{ r.username }}에게 {{ "{:,}".format(r.charge_amount) }}원 수동 충전하시겠습니까?')">충전</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('admin.cancel_charge_request', req_id=r.id) }}" style="display:inline;">
+                        <button type="submit" class="xl-btn xl-btn-gray"
+                                onclick="return confirm('충전 요청을 취소하시겠습니까?')">취소</button>
+                    </form>
+                    {% endif %}
+
+                    {# 계산서 작업 #}
+                    {% if r.status == 'charged' and not r.tax_issued %}
+                    <a href="{{ url_for('admin.issue_tax', req_id=r.id) }}" class="xl-btn xl-btn-orange">수동발행</a>
+                    {% endif %}
+                    {% if r.tax_issued %}
+                    <form method="POST" action="{{ url_for('admin.cancel_tax', req_id=r.id) }}" style="display:inline;">
+                        <button type="submit" class="xl-btn xl-btn-red"
+                                onclick="return confirm('{{ '세금계산서' if r.tax_type == 1 else '현금영수증' }} 발행을 취소하시겠습니까?')">발행취소</button>
+                    </form>
+                    {% endif %}
+
+                    {# 에러 메시지 #}
+                    {% if r.error_message %}
+                    <div class="xl-error">{{ r.error_message }}</div>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="toss-card" style="padding:40px;text-align:center;color:var(--gray-400);">표시할 충전 요청이 없습니다</div>
+{% endif %}
+
+{# 충전 요청 페이지네이션 #}
+{% if total_req_pages > 1 %}
+<div style="display:flex;justify-content:center;gap:4px;margin-top:16px;">
+    {% for p in range(1, total_req_pages + 1) %}
+    {% if p >= page - 3 and p <= page + 3 %}
+    <a href="?page={{ p }}&dep_page={{ dep_page }}&status={{ filter_status }}&start_date={{ start_date }}&end_date={{ end_date }}&search_name={{ search_name }}"
+       style="display:flex;align-items:center;justify-content:center;min-width:36px;height:36px;border-radius:8px;font-size:13px;font-weight:{% if p == page %}700{% else %}500{% endif %};color:{% if p == page %}#fff{% else %}#4e5968{% endif %};background:{% if p == page %}#2b3544{% else %}#fff{% endif %};border:1px solid {% if p == page %}#2b3544{% else %}#d1d5db{% endif %};text-decoration:none;transition:all 0.15s;">{{ p }}</a>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ── 전체 입금 내역 ── #}
+<div style="margin-top:32px;">
+    <div style="font-size:16px;font-weight:700;color:#191f28;margin-bottom:12px;">입금 내역 (팝빌)</div>
+    {% if all_deposits %}
+    <div class="xl-wrap">
+        <table class="xl-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">#</th>
+                    <th>입금시간</th>
+                    <th>입금자명</th>
+                    <th>금액</th>
+                    <th>메모</th>
+                    <th>잔액</th>
+                    <th>상태</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in all_deposits %}
+                <tr>
+                    <td>{{ d.id }}</td>
+                    <td>{{ d.transaction_at.strftime('%m/%d %H:%M:%S') if d.transaction_at else '-' }}</td>
+                    <td style="font-weight:600;">{{ d.depositor_name or '-' }}</td>
+                    <td class="xl-right xl-amount">{{ "{:,}".format(d.amount) }}</td>
+                    <td style="color:#8b95a1;font-size:12px;">{{ d.memo or '-' }}</td>
+                    <td class="xl-right" style="color:#8b95a1;">{{ "{:,}".format(d.balance_after) }}</td>
+                    <td>
+                        {% if d.status == 'new' %}
+                        <span class="xl-label xl-pending">미매칭</span>
+                        {% elif d.status == 'matched' %}
+                        <span class="xl-label xl-charged">매칭완료</span>
+                        {% elif d.status == 'confirmed' %}
+                        <span class="xl-label xl-matched">확인</span>
+                        {% else %}
+                        <span class="xl-label xl-expired">{{ d.status }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="toss-card" style="padding:30px;text-align:center;color:var(--gray-400);">입금 내역이 없습니다</div>
+    {% endif %}
+
+    {# 입금 내역 페이지네이션 #}
+    {% if total_dep_pages > 1 %}
+    <div style="display:flex;justify-content:center;gap:4px;margin-top:16px;">
+        {% for p in range(1, total_dep_pages + 1) %}
+        {% if p >= dep_page - 3 and p <= dep_page + 3 %}
+        <a href="?dep_page={{ p }}&page={{ page }}&status={{ filter_status }}&start_date={{ start_date }}&end_date={{ end_date }}&search_name={{ search_name }}"
+           style="display:flex;align-items:center;justify-content:center;min-width:36px;height:36px;border-radius:8px;font-size:13px;font-weight:{% if p == dep_page %}700{% else %}500{% endif %};color:{% if p == dep_page %}#fff{% else %}#4e5968{% endif %};background:{% if p == dep_page %}#2b3544{% else %}#fff{% endif %};border:1px solid {% if p == dep_page %}#2b3544{% else %}#d1d5db{% endif %};text-decoration:none;transition:all 0.15s;">{{ p }}</a>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function setDateRange(days) {
+    var today = new Date();
+    var end = new Date();
+    var start = new Date();
+
+    if (days === 0) {
+        // 오늘
+        start = today;
+        end = today;
+    } else if (days === -1) {
+        // 어제
+        start.setDate(today.getDate() - 1);
+        end.setDate(today.getDate() - 1);
+    } else {
+        // N일
+        start.setDate(today.getDate() + days);
+        end = today;
+    }
+
+    document.getElementById('ds_start').value = formatDate(start);
+    document.getElementById('ds_end').value = formatDate(end);
+    document.getElementById('dashForm').submit();
+}
+
+function formatDate(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+}
+
+// 20초마다 페이지 자동 새로고침
+var _autoRefresh = setInterval(function() {
+    var url = window.location.href;
+    fetch(url, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(html, 'text/html');
+            // 대시보드 업데이트
+            var newContent = doc.querySelector('.toss-container');
+            if (newContent) {
+                document.querySelector('.toss-container').innerHTML = newContent.innerHTML;
+            }
+        })
+        .catch(function() {});
+}, 20000);
+</script>
+{% endblock %}

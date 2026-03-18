@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}계산서 발행 - SNS킵{% endblock %}
+
+{% block content %}
+<div class="toss-page-header">
+    <h1 class="toss-page-title">계산서 / 영수증 수동발행</h1>
+</div>
+
+{# ── 요청 정보 ── #}
+<div class="toss-card" style="padding:24px;margin-bottom:20px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:14px;">
+        <div><span style="color:var(--gray-500);">충전 요청 ID:</span> <strong>#{{ req.id }}</strong></div>
+        <div><span style="color:var(--gray-500);">유저:</span> <strong>{{ req.username }}</strong></div>
+        <div><span style="color:var(--gray-500);">입금자명:</span> <strong>{{ req.depositor_name }}</strong></div>
+        <div><span style="color:var(--gray-500);">입금 금액:</span> <strong>{{ "{:,}".format(req.amount) }}원</strong></div>
+        <div><span style="color:var(--gray-500);">충전 금액:</span> <strong style="color:#3182f6;">{{ "{:,}".format(req.charge_amount) }}원</strong></div>
+        <div><span style="color:var(--gray-500);">상태:</span>
+            {% if req.tax_issued %}
+            <span class="toss-badge toss-badge-success">발행완료</span>
+            {% elif req.tax_error %}
+            <span class="toss-badge toss-badge-error">발행실패</span>
+            {% else %}
+            <span class="toss-badge toss-badge-warning">미발행</span>
+            {% endif %}
+        </div>
+    </div>
+    {% if req.tax_error %}
+    <div style="margin-top:12px;padding:10px;background:#fff5f5;border-radius:8px;font-size:13px;color:#e53e3e;">
+        이전 발행 오류: {{ req.tax_error }}
+    </div>
+    {% endif %}
+    {% if req.tax_mgt_key %}
+    <div style="margin-top:8px;font-size:13px;color:var(--gray-500);">
+        문서번호: {{ req.tax_mgt_key }}
+    </div>
+    {% endif %}
+</div>
+
+{# ── 발행 폼 ── #}
+<div class="toss-card" style="padding:24px;">
+    <form method="POST">
+        <div style="margin-bottom:20px;">
+            <label class="toss-label" style="font-weight:600;margin-bottom:10px;display:block;">발행 유형</label>
+            <div style="display:flex;gap:16px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;">
+                    <input type="radio" name="tax_type" value="1"
+                           {% if req.tax_type == 1 %}checked{% endif %}
+                           onchange="toggleTaxForm()" style="accent-color:#3182f6;">
+                    세금계산서
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;">
+                    <input type="radio" name="tax_type" value="2"
+                           {% if req.tax_type == 2 %}checked{% endif %}
+                           onchange="toggleTaxForm()" style="accent-color:#3182f6;">
+                    현금영수증
+                </label>
+            </div>
+        </div>
+
+        {# 세금계산서 필드 #}
+        <div id="tax-invoice-fields" style="display:none;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                <div>
+                    <label class="toss-label" style="font-size:13px;margin-bottom:4px;display:block;">회사명 *</label>
+                    <input type="text" name="company" class="toss-input"
+                           value="{{ existing_info.get('company', '') }}" placeholder="회사명">
+                </div>
+                <div>
+                    <label class="toss-label" style="font-size:13px;margin-bottom:4px;display:block;">사업자등록번호 *</label>
+                    <input type="text" name="biz_no" class="toss-input" maxlength="10"
+                           value="{{ existing_info.get('biz_no', '') }}" placeholder="하이픈 제외 10자리">
+                </div>
+                <div>
+                    <label class="toss-label" style="font-size:13px;margin-bottom:4px;display:block;">대표자</label>
+                    <input type="text" name="ceo" class="toss-input"
+                           value="{{ existing_info.get('ceo', '') }}" placeholder="대표자명">
+                </div>
+                <div>
+                    <label class="toss-label" style="font-size:13px;margin-bottom:4px;display:block;">담당자 연락처</label>
+                    <input type="text" name="contact" class="toss-input"
+                           value="{{ existing_info.get('contact', '') }}" placeholder="연락처">
+                </div>
+                <div style="grid-column:span 2;">
+                    <label class="toss-label" style="font-size:13px;margin-bottom:4px;display:block;">이메일 *</label>
+                    <input type="email" name="email" class="toss-input"
+                           value="{{ existing_info.get('email', '') }}" placeholder="세금계산서 수신 이메일">
+                </div>
+            </div>
+        </div>
+
+        {# 현금영수증 필드 #}
+        <div id="cash-receipt-fields" style="display:none;">
+            <div style="margin-bottom:16px;">
+                <label class="toss-label" style="font-size:13px;margin-bottom:4px;display:block;">휴대폰 번호 *</label>
+                <input type="text" name="phone" class="toss-input" maxlength="13"
+                       value="{{ existing_info.get('phone', '') }}" placeholder="010-0000-0000"
+                       style="max-width:300px;">
+            </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:20px;">
+            <button type="submit" class="toss-btn toss-btn-primary"
+                    onclick="return confirm('발행하시겠습니까?')">발행하기</button>
+            <a href="{{ url_for('admin.charge_requests') }}" class="toss-btn toss-btn-ghost">취소</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleTaxForm() {
+    var selected = document.querySelector('input[name="tax_type"]:checked');
+    document.getElementById('tax-invoice-fields').style.display = 'none';
+    document.getElementById('cash-receipt-fields').style.display = 'none';
+    if (selected) {
+        if (selected.value === '1') {
+            document.getElementById('tax-invoice-fields').style.display = 'block';
+        } else if (selected.value === '2') {
+            document.getElementById('cash-receipt-fields').style.display = 'block';
+        }
+    }
+}
+// 페이지 로드 시 초기화
+toggleTaxForm();
+</script>
+{% endblock %}

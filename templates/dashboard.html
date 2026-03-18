@@ -2,8 +2,16 @@
 {% block title %}대시보드 - SNS킵{% endblock %}
 
 {% block content %}
-<div class="toss-page-header">
+<div class="toss-page-header" style="display:flex;align-items:center;justify-content:space-between;">
     <h1 class="toss-page-title">대시보드</h1>
+    {% if today_errors > 0 %}
+    <form action="{{ url_for('admin.retry_all_errors') }}" method="POST" onsubmit="return confirm('에러/검토필요 주문을 모두 재처리하시겠습니까?');" style="margin:0;">
+        <button type="submit" class="toss-btn" style="background:#f04452;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            에러 주문 일괄 재처리
+        </button>
+    </form>
+    {% endif %}
 </div>
 
 <div class="toss-stats">

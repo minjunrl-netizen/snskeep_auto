@@ -34,6 +34,7 @@ ADMIN_API_KEY = config.INSTAMONSTER_ADMIN_API_KEY
 SERVICE_ID = "32"  # 인스타 팔로우 서비스
 
 CAMPAIGN_LOG_FILE = os.path.join(config.BASE_DIR, "data", "campaign_log.json")
+CAMPAIGN_RETRY_FILE = os.path.join(config.BASE_DIR, "data", "campaign_retry.json")
 
 
 def _api_headers():
@@ -66,6 +67,35 @@ def load_campaign_log() -> dict:
         except Exception:
             pass
     return {}
+
+
+# ── 캠페인 재시도 추적 ─────────────────────────────────
+
+def _load_campaign_retry() -> dict:
+    """캠페인 재시도 상태 로드. {username: {retry_count, used_fallback, last_retry}}"""
+    if os.path.isfile(CAMPAIGN_RETRY_FILE):
+        try:
+            with open(CAMPAIGN_RETRY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_campaign_retry(data: dict):
+    try:
+        with open(CAMPAIGN_RETRY_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.exception("캠페인 재시도 상태 저장 실패")
+
+
+def _clear_campaign_retry(username: str):
+    """캠페인이 완료되거나 최종 처리된 후 재시도 기록 삭제."""
+    retry_data = _load_campaign_retry()
+    if username in retry_data:
+        del retry_data[username]
+        _save_campaign_retry(retry_data)
 
 
 # ── 인스타몬스터 Admin API 헬퍼 ───────────────────────
@@ -364,6 +394,7 @@ def check_campaign_completion_job():
 
         if action_count >= quantity:
             completed_ids.append(order["id"])
+            _clear_campaign_retry(username)
             logger.info(
                 "[캠페인 완료 체크] %s: %s 완전이행 → completed (action=%d, qty=%d, ad_idx=%s)",
                 username, c_status, action_count, quantity, campaign.get("ad_idx"),
@@ -379,7 +410,7 @@ def check_campaign_completion_job():
                 "ad_idx": campaign.get("ad_idx"),
             })
             logger.info(
-                "[캠페인 완료 체크] %s: %s 부분이행 → 부분환불 (action=%d, qty=%d, remains=%d, ad_idx=%s)",
+                "[캠페인 완료 체크] %s: %s 부분이행 (action=%d, qty=%d, remains=%d, ad_idx=%s)",
                 username, c_status, action_count, quantity, remains, campaign.get("ad_idx"),
             )
 
@@ -391,10 +422,97 @@ def check_campaign_completion_job():
             logger.exception("[캠페인 완료 체크] completed 상태 변경 실패")
 
     if partial_refund_orders:
-        _process_partial_refund(partial_refund_orders, platform="instagram")
+        _retry_or_refund(partial_refund_orders, client, platform="instagram")
 
     if not completed_ids and not partial_refund_orders:
         logger.info("[캠페인 완료 체크] 완료 처리할 주문 없음")
+
+
+MAX_ANSWER_RETRIES = 3  # 정답 바꿔서 재시도 횟수
+
+
+def _retry_or_refund(partial_orders: list[dict], client: SuperapClient, platform: str = "instagram"):
+    """부분이행 캠페인: 정답 변경 → 수정(update) 시도, 최종 실패 시 환불 알림.
+
+    1) retry_count < MAX_ANSWER_RETRIES: 정답을 다시 스크래핑해서 캠페인 수정
+    2) retry_count == MAX_ANSWER_RETRIES (폴백): 정답을 "게시물"로 고정해서 수정
+    3) 폴백까지 실패: 텔레그램 알림 (수동 환불)
+    """
+    label = "[캠페인 완료 체크]" if platform == "instagram" else "[유튜브 완료 체크]"
+    retry_data = _load_campaign_retry()
+    final_refund_orders = []
+
+    for po in partial_orders:
+        username = po["username"]
+        remains = po["remains"]
+        ad_idx = po.get("ad_idx")
+
+        if not ad_idx:
+            logger.warning("%s %s: ad_idx 없음 → 수정 불가, 환불 처리", label, username)
+            final_refund_orders.append(po)
+            continue
+
+        state = retry_data.get(username, {"retry_count": 0, "used_fallback": False})
+
+        # ── 이미 폴백("게시물")까지 시도한 경우 → 최종 환불 처리
+        if state.get("used_fallback"):
+            logger.info(
+                "%s %s: 폴백(게시물)까지 실패 → 텔레그램 알림", label, username,
+            )
+            _clear_campaign_retry(username)
+            final_refund_orders.append(po)
+            continue
+
+        retry_count = state.get("retry_count", 0)
+
+        # ── 재시도 횟수 초과 → "게시물"로 폴백 시도
+        if retry_count >= MAX_ANSWER_RETRIES:
+            answer = "게시물"
+            state["used_fallback"] = True
+            logger.info(
+                "%s %s: %d회 재시도 실패 → 폴백 정답 '게시물'로 수정 (ad_idx=%s, remains=%d)",
+                label, username, retry_count, ad_idx, remains,
+            )
+        else:
+            # ── 정답 다시 스크래핑해서 수정
+            answer = client._scrape_answer(username)
+            state["retry_count"] = retry_count + 1
+            logger.info(
+                "%s %s: 정답 변경 재시도 %d/%d → '%s' (ad_idx=%s, remains=%d)",
+                label, username, state["retry_count"], MAX_ANSWER_RETRIES,
+                answer, ad_idx, remains,
+            )
+
+        state["last_retry"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        retry_data[username] = state
+        _save_campaign_retry(retry_data)
+
+        # 기존 캠페인 수정 (정답 변경)
+        try:
+            result = client.update_campaign(
+                ad_idx=str(ad_idx),
+                username=username,
+                answer=answer,
+            )
+            if result.get("ok"):
+                logger.info(
+                    "%s %s: 캠페인 수정 성공 (정답='%s', ad_idx=%s)",
+                    label, username, answer, ad_idx,
+                )
+            else:
+                logger.warning(
+                    "%s %s: 캠페인 수정 실패 — %s",
+                    label, username, result.get("message"),
+                )
+                _clear_campaign_retry(username)
+                final_refund_orders.append(po)
+        except Exception:
+            logger.exception("%s %s: 캠페인 수정 중 오류", label, username)
+            _clear_campaign_retry(username)
+            final_refund_orders.append(po)
+
+    if final_refund_orders:
+        _process_partial_refund(final_refund_orders, platform=platform)
 
 
 def _process_partial_refund(partial_orders: list[dict], platform: str = "instagram"):
@@ -768,6 +886,7 @@ def check_youtube_campaign_completion_job():
 
         if action_count >= quantity:
             completed_ids.append(order["id"])
+            _clear_campaign_retry(channel_url)
             logger.info(
                 "[유튜브 완료 체크] %s: %s 완전이행 → completed (action=%d, qty=%d, ad_idx=%s)",
                 channel_url, c_status, action_count, quantity, campaign.get("ad_idx"),
@@ -783,7 +902,7 @@ def check_youtube_campaign_completion_job():
                 "ad_idx": campaign.get("ad_idx"),
             })
             logger.info(
-                "[유튜브 완료 체크] %s: %s 부분이행 → 부분환불 (action=%d, qty=%d, remains=%d, ad_idx=%s)",
+                "[유튜브 완료 체크] %s: %s 부분이행 (action=%d, qty=%d, remains=%d, ad_idx=%s)",
                 channel_url, c_status, action_count, quantity, remains, campaign.get("ad_idx"),
             )
 
@@ -795,7 +914,7 @@ def check_youtube_campaign_completion_job():
             logger.exception("[유튜브 완료 체크] completed 상태 변경 실패")
 
     if partial_refund_orders:
-        _process_partial_refund(partial_refund_orders, platform="youtube")
+        _retry_or_refund(partial_refund_orders, client, platform="youtube")
 
     if not completed_ids and not partial_refund_orders:
         logger.info("[유튜브 완료 체크] 완료 처리할 주문 없음")

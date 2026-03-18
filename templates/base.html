@@ -56,6 +56,14 @@
                    href="{{ url_for('admin.youtube_setting_log') }}">세팅 로그</a>
             </div>
             {% endif %}
+            {# ── 무통장입금 카테고리 ── #}
+            {% if current_user.has_permission('deposits') %}
+            <div class="toss-nav-group">
+                <span class="toss-nav-category">무통장입금</span>
+                <a class="toss-nav-link {% if request.endpoint == 'admin.charge_requests' %}active{% endif %}"
+                   href="{{ url_for('admin.charge_requests') }}">충전 요청</a>
+            </div>
+            {% endif %}
             {# ── 관리 카테고리 ── #}
             {% if current_user.is_super_admin %}
             <div class="toss-nav-group">

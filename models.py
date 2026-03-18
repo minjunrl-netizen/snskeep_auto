@@ -22,7 +22,7 @@ class AdminUser(UserMixin, db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=utcnow)
 
-    ALL_PERMISSIONS = ["dashboard", "mappings", "orders", "services", "setup", "extractor", "youtube"]
+    ALL_PERMISSIONS = ["dashboard", "mappings", "orders", "services", "setup", "extractor", "youtube", "deposits"]
     PERMISSION_LABELS = {
         "dashboard": "대시보드",
         "mappings": "상품 매핑",
@@ -31,6 +31,7 @@ class AdminUser(UserMixin, db.Model):
         "setup": "설정",
         "extractor": "퀀텀 팔로워 세팅",
         "youtube": "퀀텀 유튜브 구독자",
+        "deposits": "무통장입금",
     }
 
     def set_password(self, password):
@@ -143,6 +144,51 @@ class ProcessedOrder(db.Model):
     error_message = db.Column(db.Text, default="")
     extra_info = db.Column(db.Text, default="")  # 구독 주문 시 상세 정보 (JSON)
     created_at = db.Column(db.DateTime, default=utcnow)
+
+
+class BankDeposit(db.Model):
+    """무통장입금 내역 (팝빌/Granter 통합)"""
+    __tablename__ = "bank_deposits"
+
+    id = db.Column(db.Integer, primary_key=True)
+    source = db.Column(db.Text, nullable=False, default="popbill")  # popbill
+    external_id = db.Column(db.Text, nullable=False)  # 중복방지 (ticket_id / popbill trSN)
+    depositor_name = db.Column(db.Text, default="")  # 입금자명
+    amount = db.Column(db.Integer, nullable=False, default=0)  # 입금 금액
+    bank_name = db.Column(db.Text, default="")  # 은행명
+    account_number = db.Column(db.Text, default="")  # 계좌번호
+    memo = db.Column(db.Text, default="")  # 적요/내용
+    balance_after = db.Column(db.Integer, default=0)  # 거래 후 잔액
+    transaction_at = db.Column(db.DateTime, nullable=True)  # 거래 시각
+    status = db.Column(db.Text, default="new")  # new / matched / confirmed
+    matched_order_id = db.Column(db.Text, default="")  # 매칭된 카페24 주문번호
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("source", "external_id", name="uq_deposit_source_ext"),
+    )
+
+
+class ChargeRequest(db.Model):
+    """무통장입금 충전 요청"""
+    __tablename__ = "charge_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.Text, nullable=False)          # 인스타몬스터 username
+    depositor_name = db.Column(db.Text, nullable=False)    # 입금자명
+    amount = db.Column(db.Integer, nullable=False)          # 입금 금액 (부가세 포함, e.g. 11000)
+    charge_amount = db.Column(db.Integer, nullable=False)   # 충전 금액 (부가세 제외, e.g. 10000)
+    status = db.Column(db.Text, default="pending")          # pending / matched / charged / expired / failed
+    matched_deposit_id = db.Column(db.Integer, nullable=True)  # 매칭된 BankDeposit.id
+    payment_id = db.Column(db.Integer, nullable=True)       # 인스타몬스터 payment_id
+    tax_type = db.Column(db.Integer, default=0)             # 0=없음, 1=세금계산서, 2=현금영수증
+    tax_info = db.Column(db.Text, default="")               # 세금계산서 정보 (JSON)
+    error_message = db.Column(db.Text, default="")
+    tax_issued = db.Column(db.Boolean, default=False)       # 계산서/영수증 발행 여부
+    tax_mgt_key = db.Column(db.Text, default="")            # 팝빌 문서번호
+    tax_error = db.Column(db.Text, default="")              # 발행 실패 메시지
+    created_at = db.Column(db.DateTime, default=utcnow)
+    charged_at = db.Column(db.DateTime, nullable=True)
 
 
 class OAuthToken(db.Model):

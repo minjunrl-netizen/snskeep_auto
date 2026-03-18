@@ -2,9 +2,10 @@ import logging
 from datetime import timedelta
 from flask import Flask
 from flask_login import LoginManager
-from models import db, AdminUser
+from models import db, AdminUser, BankDeposit, ChargeRequest
 from admin.routes import admin_bp
 from cafe24.auth import oauth_bp
+from api_public import public_bp
 import config
 
 logging.basicConfig(
@@ -65,6 +66,20 @@ def create_app():
         except Exception:
             pass  # 이미 존재
 
+        # Migration: charge_requests 테이블에 tax 컬럼 추가
+        for col_name in ("tax_issued", "tax_mgt_key", "tax_error"):
+            try:
+                default = "0" if col_name == "tax_issued" else "''"
+                col_type = "BOOLEAN DEFAULT 0" if col_name == "tax_issued" else f"TEXT DEFAULT ''"
+                with db.engine.connect() as conn:
+                    conn.execute(sqlalchemy.text(
+                        f"ALTER TABLE charge_requests ADD COLUMN {col_name} {col_type}"
+                    ))
+                    conn.commit()
+                    logger.info("Migration: charge_requests.%s 컬럼 추가 완료", col_name)
+            except Exception:
+                pass
+
         # 초기 super_admin 계정 생성 (없을 경우)
         if not AdminUser.query.filter_by(username="bjdlclrh").first():
             admin = AdminUser(username="bjdlclrh", role="super_admin")
@@ -75,6 +90,7 @@ def create_app():
 
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(oauth_bp)
+    app.register_blueprint(public_bp)
 
     return app
 
@@ -87,6 +103,7 @@ def start_scheduler(app):
         auto_campaign_job, check_campaign_completion_job, sync_remains_job,
         auto_youtube_campaign_job, check_youtube_campaign_completion_job, sync_youtube_remains_job,
     )
+    from services.popbill_bank import poll_deposits, expire_old_requests
 
     scheduler = BackgroundScheduler()
 
@@ -163,6 +180,28 @@ def start_scheduler(app):
     scheduler.add_job(yt_campaign_check_job, "interval", seconds=180, id="yt_campaign_check")
     # 유튜브 리메인 동기화: 3분마다
     scheduler.add_job(yt_remains_sync_job, "interval", seconds=180, id="yt_remains_sync")
+
+    # ── 무통장입금 (팝빌) 폴링: 60초마다 ──
+    def deposit_poll_job():
+        with app.app_context():
+            try:
+                poll_deposits()
+            except Exception:
+                logger.exception("팝빌 입금 폴링 중 오류 발생")
+
+    # 충전 요청 만료 처리: 1시간마다
+    def expire_job():
+        with app.app_context():
+            try:
+                expire_old_requests()
+            except Exception:
+                logger.exception("충전 요청 만료 처리 중 오류")
+
+    if config.POPBILL_LINK_ID and config.POPBILL_CORP_NUM:
+        scheduler.add_job(deposit_poll_job, "interval", seconds=20, id="popbill_deposits")
+        scheduler.add_job(expire_job, "interval", seconds=3600, id="expire_charge_requests")
+        logger.info("팝빌 입금 폴링 스케줄러 등록 (20초 간격)")
+
     scheduler.start()
     logger.info(
         "스케줄러 시작 (폴링: %s초, 상태체크: 300초, 캠페인세팅: 180초, 캠페인완료체크: 180초, 리메인동기화: 180초, "

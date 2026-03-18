@@ -29,6 +29,9 @@ from services.youtube_scraper import (
     normalize_youtube_url,
 )
 from services.campaign_scheduler import get_orders_by_status
+from services.popbill_bank import poll_deposits, get_bank_account_info
+from services.instamonster_charge import add_payment
+from services.popbill_tax import issue_tax_invoice, issue_cash_receipt, cancel_tax_invoice, cancel_cash_receipt
 import config
 
 logger = logging.getLogger(__name__)
@@ -422,6 +425,31 @@ def retry_order(order_id):
     else:
         flash(message, "danger")
     return redirect(url_for("admin.orders"))
+
+
+@admin_bp.route("/orders/retry-all-errors", methods=["POST"])
+@permission_required("orders")
+def retry_all_errors():
+    """에러/검토필요 주문 일괄 재처리"""
+    error_orders = ProcessedOrder.query.filter(
+        ProcessedOrder.status.in_(["error", "needs_review"])
+    ).all()
+
+    if not error_orders:
+        flash("재처리할 에러 주문이 없습니다.", "info")
+        return redirect(url_for("admin.dashboard"))
+
+    success_count = 0
+    fail_count = 0
+    for record in error_orders:
+        ok, msg = do_retry_order(record.id)
+        if ok:
+            success_count += 1
+        else:
+            fail_count += 1
+
+    flash(f"일괄 재처리 완료: 성공 {success_count}건, 실패 {fail_count}건", "success" if fail_count == 0 else "warning")
+    return redirect(url_for("admin.dashboard"))
 
 
 # ── 카페24 상품 API ──
@@ -1140,3 +1168,430 @@ def api_youtube_setting_log_data():
     except Exception as e:
         logger.exception("유튜브 세팅 로그 데이터 조회 실패")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════
+# ── 무통장입금 ──
+# ══════════════════════════════════════════════
+
+@admin_bp.route("/deposits")
+@permission_required("deposits")
+def deposits():
+    """무통장입금 현황 페이지."""
+    from models import BankDeposit
+
+    filter_status = request.args.get("status", "")
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+
+    query = BankDeposit.query
+
+    if filter_status:
+        query = query.filter_by(status=filter_status)
+
+    if start_date:
+        try:
+            dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            query = query.filter(BankDeposit.transaction_at >= dt)
+        except ValueError:
+            pass
+
+    if end_date:
+        try:
+            dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            query = query.filter(BankDeposit.transaction_at < dt)
+        except ValueError:
+            pass
+
+    all_deposits = query.order_by(BankDeposit.transaction_at.desc()).limit(300).all()
+
+    # 오늘 통계
+    kst = timezone(timedelta(hours=9))
+    today_start = datetime.now(kst).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_deposits = BankDeposit.query.filter(BankDeposit.transaction_at >= today_start).all()
+    today_total_amount = sum(d.amount for d in today_deposits)
+    today_count = len(today_deposits)
+    today_new = sum(1 for d in today_deposits if d.status == "new")
+
+    return render_template(
+        "deposits.html",
+        deposits=all_deposits,
+        filter_status=filter_status,
+        start_date=start_date,
+        end_date=end_date,
+        today_total_amount=today_total_amount,
+        today_count=today_count,
+        today_new=today_new,
+        popbill_configured=bool(config.POPBILL_CORP_NUM and config.POPBILL_BANK_CODE),
+    )
+
+
+@admin_bp.route("/deposits/<int:deposit_id>/confirm", methods=["POST"])
+@permission_required("deposits")
+def confirm_deposit(deposit_id):
+    """입금 확인 처리."""
+    from models import BankDeposit
+
+    deposit = BankDeposit.query.get_or_404(deposit_id)
+    matched_order = request.form.get("matched_order_id", "").strip()
+
+    deposit.status = "confirmed"
+    if matched_order:
+        deposit.matched_order_id = matched_order
+    db.session.commit()
+
+    flash(f"입금 #{deposit_id} ({deposit.depositor_name}, {deposit.amount:,}원) 확인 처리됨.", "success")
+    return redirect(url_for("admin.deposits"))
+
+
+@admin_bp.route("/deposits/<int:deposit_id>/match", methods=["POST"])
+@permission_required("deposits")
+def match_deposit(deposit_id):
+    """입금-주문 매칭."""
+    from models import BankDeposit
+
+    deposit = BankDeposit.query.get_or_404(deposit_id)
+    order_id = request.form.get("order_id", "").strip()
+
+    if not order_id:
+        flash("주문번호를 입력해주세요.", "danger")
+        return redirect(url_for("admin.deposits"))
+
+    deposit.status = "matched"
+    deposit.matched_order_id = order_id
+    db.session.commit()
+
+    flash(f"입금 #{deposit_id} → 주문 {order_id} 매칭 완료.", "success")
+    return redirect(url_for("admin.deposits"))
+
+
+@admin_bp.route("/api/deposits/poll", methods=["POST"])
+@permission_required("deposits")
+def api_poll_deposits():
+    """수동으로 팝빌 입금 폴링 실행."""
+    try:
+        poll_deposits()
+        return jsonify({"ok": True, "message": "폴링 완료"})
+    except Exception as e:
+        logger.exception("수동 폴링 실패")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/api/deposits/stats")
+@permission_required("deposits")
+def api_deposit_stats():
+    """입금 통계 JSON."""
+    from models import BankDeposit
+
+    kst = timezone(timedelta(hours=9))
+    today_start = datetime.now(kst).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    today_deposits = BankDeposit.query.filter(BankDeposit.transaction_at >= today_start).all()
+    return jsonify({
+        "ok": True,
+        "today_count": len(today_deposits),
+        "today_amount": sum(d.amount for d in today_deposits),
+        "today_new": sum(1 for d in today_deposits if d.status == "new"),
+        "today_matched": sum(1 for d in today_deposits if d.status == "matched"),
+        "today_confirmed": sum(1 for d in today_deposits if d.status == "confirmed"),
+    })
+
+
+# ── 충전 요청 관리 ──
+
+@admin_bp.route("/charge-requests")
+@permission_required("deposits")
+def charge_requests():
+    """충전 요청 현황 페이지."""
+    from models import ChargeRequest
+
+    filter_status = request.args.get("status", "")
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    search_name = request.args.get("search_name", "").strip()
+    page = request.args.get("page", 1, type=int)
+    dep_page = request.args.get("dep_page", 1, type=int)
+    per_page = 30
+
+    # 2달 이내만 조회
+    two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
+
+    query = ChargeRequest.query.filter(ChargeRequest.created_at >= two_months_ago)
+
+    if filter_status:
+        query = query.filter_by(status=filter_status)
+
+    if search_name:
+        query = query.filter(ChargeRequest.depositor_name.contains(search_name))
+
+    # 날짜 필터 (charged_at 기준)
+    date_filter_query = ChargeRequest.query.filter_by(status="charged").filter(ChargeRequest.created_at >= two_months_ago)
+    if start_date:
+        try:
+            dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            query = query.filter(ChargeRequest.created_at >= dt)
+            date_filter_query = date_filter_query.filter(ChargeRequest.charged_at >= dt)
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            query = query.filter(ChargeRequest.created_at < dt)
+            date_filter_query = date_filter_query.filter(ChargeRequest.charged_at < dt)
+        except ValueError:
+            pass
+
+    # 페이지네이션
+    total_requests = query.count()
+    total_req_pages = max(1, (total_requests + per_page - 1) // per_page)
+    all_requests = query.order_by(ChargeRequest.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+
+    # UTC → KST 변환
+    kst = timezone(timedelta(hours=9))
+    for req in all_requests:
+        if req.created_at and req.created_at.tzinfo is None:
+            req._kst_created = req.created_at.replace(tzinfo=timezone.utc).astimezone(kst)
+        elif req.created_at:
+            req._kst_created = req.created_at.astimezone(kst)
+        else:
+            req._kst_created = None
+
+        if req.charged_at and req.charged_at.tzinfo is None:
+            req._kst_charged = req.charged_at.replace(tzinfo=timezone.utc).astimezone(kst)
+        elif req.charged_at:
+            req._kst_charged = req.charged_at.astimezone(kst)
+        else:
+            req._kst_charged = None
+
+    # 매칭된 입금시간 조회
+    from models import BankDeposit
+    deposit_times = {}
+    for req in all_requests:
+        if req.matched_deposit_id:
+            dep = BankDeposit.query.get(req.matched_deposit_id)
+            if dep and dep.transaction_at:
+                deposit_times[req.id] = dep.transaction_at
+
+    # 전체 입금 내역 (2달 이내)
+    deposit_query = BankDeposit.query.filter(BankDeposit.transaction_at >= two_months_ago)
+    if start_date:
+        try:
+            dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            deposit_query = deposit_query.filter(BankDeposit.transaction_at >= dt)
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            deposit_query = deposit_query.filter(BankDeposit.transaction_at < dt)
+        except ValueError:
+            pass
+    total_deposits = deposit_query.count()
+    total_dep_pages = max(1, (total_deposits + per_page - 1) // per_page)
+    all_deposits = deposit_query.order_by(BankDeposit.transaction_at.desc()).offset((dep_page - 1) * per_page).limit(per_page).all()
+
+    # 기본 통계
+    pending_count = ChargeRequest.query.filter_by(status="pending").count()
+    charged_count = ChargeRequest.query.filter_by(status="charged").count()
+    failed_count = ChargeRequest.query.filter_by(status="failed").count()
+
+    # 매출 통계 (날짜 필터 적용)
+    charged_list = date_filter_query.all()
+    cash_sales = sum(r.amount for r in charged_list if r.tax_type == 0 or (not r.tax_issued and r.tax_type != 0))
+    tax_invoice_sales = sum(r.amount for r in charged_list if r.tax_type == 1 and r.tax_issued)
+    cash_receipt_sales = sum(r.amount for r in charged_list if r.tax_type == 2 and r.tax_issued)
+    total_sales = sum(r.amount for r in charged_list)
+
+    return render_template(
+        "charge_requests.html",
+        requests=all_requests,
+        filter_status=filter_status,
+        start_date=start_date,
+        end_date=end_date,
+        search_name=search_name,
+        pending_count=pending_count,
+        charged_count=charged_count,
+        failed_count=failed_count,
+        cash_sales=cash_sales,
+        tax_invoice_sales=tax_invoice_sales,
+        cash_receipt_sales=cash_receipt_sales,
+        total_sales=total_sales,
+        deposit_times=deposit_times,
+        all_deposits=all_deposits,
+        page=page,
+        total_req_pages=total_req_pages,
+        dep_page=dep_page,
+        total_dep_pages=total_dep_pages,
+    )
+
+
+@admin_bp.route("/charge-requests/<int:req_id>/manual-charge", methods=["POST"])
+@permission_required("deposits")
+def manual_charge(req_id):
+    """수동 충전 처리."""
+    from models import ChargeRequest
+
+    req = ChargeRequest.query.get_or_404(req_id)
+    if req.status == "charged":
+        flash("이미 충전 완료된 요청입니다.", "warning")
+        return redirect(url_for("admin.charge_requests"))
+
+    result = add_payment(
+        username=req.username,
+        amount=req.charge_amount,
+        memo=f"무통장입금 - {req.amount:,}원(부가세 제외 {req.charge_amount:,}원 충전)",
+    )
+
+    if result.get("ok"):
+        req.status = "charged"
+        req.payment_id = result.get("payment_id")
+        req.charged_at = datetime.now(timezone.utc)
+        db.session.commit()
+        flash(f"수동 충전 완료: {req.username}, {req.charge_amount:,}원", "success")
+
+        # 세금계산서/현금영수증 자동발행
+        if req.tax_type == 1:
+            tax_result = issue_tax_invoice(req)
+            if tax_result.get("ok"):
+                req.tax_issued = True
+                req.tax_mgt_key = tax_result.get("mgt_key", "")
+                db.session.commit()
+                flash("세금계산서 자동발행 완료", "success")
+            else:
+                req.tax_error = tax_result.get("error", "")
+                db.session.commit()
+                flash(f"세금계산서 발행 실패: {tax_result.get('error')}", "warning")
+        elif req.tax_type == 2:
+            tax_result = issue_cash_receipt(req)
+            if tax_result.get("ok"):
+                req.tax_issued = True
+                req.tax_mgt_key = tax_result.get("mgt_key", "")
+                db.session.commit()
+                flash("현금영수증 자동발행 완료", "success")
+            else:
+                req.tax_error = tax_result.get("error", "")
+                db.session.commit()
+                flash(f"현금영수증 발행 실패: {tax_result.get('error')}", "warning")
+    else:
+        req.status = "failed"
+        req.error_message = result.get("error", "")
+        db.session.commit()
+        flash(f"충전 실패: {result.get('error')}", "danger")
+
+    return redirect(url_for("admin.charge_requests"))
+
+
+@admin_bp.route("/charge-requests/<int:req_id>/cancel", methods=["POST"])
+@permission_required("deposits")
+def cancel_charge_request(req_id):
+    """충전 요청 취소."""
+    from models import ChargeRequest
+
+    req = ChargeRequest.query.get_or_404(req_id)
+    if req.status == "charged":
+        flash("이미 충전 완료된 요청은 취소할 수 없습니다.", "danger")
+        return redirect(url_for("admin.charge_requests"))
+
+    req.status = "expired"
+    db.session.commit()
+    flash(f"충전 요청 #{req.id} 취소됨.", "success")
+    return redirect(url_for("admin.charge_requests"))
+
+
+@admin_bp.route("/charge-requests/<int:req_id>/issue-tax", methods=["GET", "POST"])
+@permission_required("deposits")
+def issue_tax(req_id):
+    """세금계산서/현금영수증 수동발행 페이지."""
+    from models import ChargeRequest
+
+    req = ChargeRequest.query.get_or_404(req_id)
+
+    if request.method == "POST":
+        tax_type = int(request.form.get("tax_type", "0"))
+        tax_info = {}
+
+        if tax_type == 1:
+            tax_info = {
+                "company": request.form.get("company", ""),
+                "biz_no": request.form.get("biz_no", ""),
+                "ceo": request.form.get("ceo", ""),
+                "contact": request.form.get("contact", ""),
+                "email": request.form.get("email", ""),
+            }
+        elif tax_type == 2:
+            tax_info = {"phone": request.form.get("phone", "")}
+        else:
+            flash("발행 유형을 선택해주세요.", "danger")
+            return redirect(url_for("admin.issue_tax", req_id=req_id))
+
+        # 정보 업데이트
+        import json as _json
+        req.tax_type = tax_type
+        req.tax_info = _json.dumps(tax_info, ensure_ascii=False)
+        db.session.commit()
+
+        # 발행
+        if tax_type == 1:
+            result = issue_tax_invoice(req)
+        else:
+            result = issue_cash_receipt(req)
+
+        if result.get("ok"):
+            req.tax_issued = True
+            req.tax_mgt_key = result.get("mgt_key", "")
+            req.tax_error = ""
+            db.session.commit()
+            type_name = "세금계산서" if tax_type == 1 else "현금영수증"
+            flash(f"{type_name} 발행 완료 (문서번호: {result.get('mgt_key')})", "success")
+        else:
+            req.tax_error = result.get("error", "")
+            db.session.commit()
+            flash(f"발행 실패: {result.get('error')}", "danger")
+
+        return redirect(url_for("admin.charge_requests"))
+
+    # GET: 기존 세금 정보 로드
+    import json as _json
+    try:
+        existing_info = _json.loads(req.tax_info) if req.tax_info else {}
+    except (ValueError, TypeError):
+        existing_info = {}
+
+    return render_template("issue_tax.html", req=req, existing_info=existing_info)
+
+
+@admin_bp.route("/charge-requests/<int:req_id>/cancel-tax", methods=["POST"])
+@permission_required("deposits")
+def cancel_tax(req_id):
+    """세금계산서/현금영수증 발행취소."""
+    from models import ChargeRequest
+
+    req = ChargeRequest.query.get_or_404(req_id)
+    if not req.tax_issued:
+        flash("발행된 계산서가 없습니다.", "danger")
+        return redirect(url_for("admin.charge_requests"))
+
+    if not req.tax_mgt_key:
+        flash("문서번호가 없어 취소할 수 없습니다.", "danger")
+        return redirect(url_for("admin.charge_requests"))
+
+    if req.tax_type == 1:
+        result = cancel_tax_invoice(req.tax_mgt_key)
+        type_name = "세금계산서"
+    elif req.tax_type == 2:
+        result = cancel_cash_receipt(req)
+        type_name = "현금영수증"
+    else:
+        flash("발행 유형을 확인할 수 없습니다.", "danger")
+        return redirect(url_for("admin.charge_requests"))
+
+    if result.get("ok"):
+        req.tax_issued = False
+        req.tax_mgt_key = ""
+        req.tax_error = ""
+        db.session.commit()
+        flash(f"{type_name} 취소 완료", "success")
+    else:
+        flash(f"{type_name} 취소 실패: {result.get('error')}", "danger")
+
+    return redirect(url_for("admin.charge_requests"))

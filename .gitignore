@@ -5,3 +5,6 @@ venv/
 .vscode/
 .claude/
 nul
+
+.env
+*.pem
